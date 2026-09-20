@@ -336,4 +336,307 @@ def save_money_market():
         count += 1
 
     print(
-        f"Money-market
+        f"Money-market observations saved: {count}"
+    )
+
+
+# ============================================================
+# OIS
+# ============================================================
+
+def fetch_ois():
+
+    response = requests.get(
+        CCIL_OIS_URL,
+        headers=SOURCE_HEADERS,
+        timeout=30
+    )
+
+    response.raise_for_status()
+
+    data = response.json()
+
+    raw = data.get(
+        "resultMiborOis"
+    )
+
+    if raw is None:
+
+        raise RuntimeError(
+            "CCIL OIS data not found"
+        )
+
+    rows = json.loads(raw)
+
+    return rows
+
+
+def save_ois(reference_date):
+
+    rows = fetch_ois()
+
+    wanted_tenors = {
+
+        "1M",
+        "2M",
+        "3M",
+        "6M",
+        "1Y",
+        "2Y",
+        "3Y",
+        "5Y",
+        "10Y"
+    }
+
+    count = 0
+
+    for row in rows:
+
+        tenor = row.get(
+            "ismy_trad_mrty"
+        )
+
+        if tenor not in wanted_tenors:
+            continue
+
+        value = row.get(
+            "ismy_drvt_warr"
+        )
+
+        if value in (
+            None,
+            "",
+            "null"
+        ):
+
+            continue
+
+        save_observation(
+
+            obs_date=reference_date,
+
+            source="CCIL",
+
+            series="OIS",
+
+            tenor=tenor,
+
+            value=float(value),
+
+            source_url=CCIL_OIS_URL
+        )
+
+        count += 1
+
+    print(
+        f"OIS observations saved: {count}"
+    )
+
+
+# ============================================================
+# G-SEC
+# ============================================================
+
+def fetch_gsec():
+
+    response = requests.get(
+        CCIL_GSEC_URL,
+        headers=SOURCE_HEADERS,
+        timeout=30
+    )
+
+    response.raise_for_status()
+
+    tables = pd.read_html(
+        StringIO(response.text)
+    )
+
+    table = None
+
+    for t in tables:
+
+        columns = [
+            str(c).lower()
+            for c in t.columns
+        ]
+
+        if (
+            any("date" in c for c in columns)
+            and
+            any("tenor" in c for c in columns)
+            and
+            any("ytm" in c for c in columns)
+        ):
+
+            table = t
+            break
+
+    if table is None:
+
+        raise RuntimeError(
+            "CCIL G-sec table not found"
+        )
+
+    table.columns = [
+        str(c).strip()
+        for c in table.columns
+    ]
+
+    return table
+
+
+def save_gsec():
+
+    table = fetch_gsec()
+
+    date_col = next(
+        c
+        for c in table.columns
+        if "date" in c.lower()
+    )
+
+    tenor_col = next(
+        c
+        for c in table.columns
+        if "tenor" in c.lower()
+    )
+
+    ytm_col = next(
+        c
+        for c in table.columns
+        if "ytm" in c.lower()
+    )
+
+    table[date_col] = pd.to_datetime(
+        table[date_col],
+        errors="coerce"
+    ).dt.date
+
+    table[ytm_col] = pd.to_numeric(
+        table[ytm_col],
+        errors="coerce"
+    )
+
+    table = table.dropna(
+        subset=[
+            date_col,
+            ytm_col
+        ]
+    )
+
+    wanted = {
+
+        "4Y-5Y":
+            "5Y",
+
+        "9Y-10Y":
+            "10Y",
+
+        "28Y-30Y":
+            "30Y"
+    }
+
+    count = 0
+
+    for _, row in table.iterrows():
+
+        bucket = str(
+            row[tenor_col]
+        ).strip()
+
+        dashboard_tenor = wanted.get(
+            bucket
+        )
+
+        if dashboard_tenor is None:
+            continue
+
+        save_observation(
+
+            obs_date=row[date_col],
+
+            source="CCIL",
+
+            series="GSEC",
+
+            tenor=dashboard_tenor,
+
+            value=row[ytm_col],
+
+            source_url=CCIL_GSEC_URL
+        )
+
+        count += 1
+
+    print(
+        f"G-sec observations saved: {count}"
+    )
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+if __name__ == "__main__":
+
+    print(
+        "Starting CCIL market-data collector..."
+    )
+
+    # Create database table if required
+    ensure_table()
+
+    # --------------------------------------------------------
+    # Money market
+    # --------------------------------------------------------
+
+    save_money_market()
+
+    # --------------------------------------------------------
+    # Determine today's India date
+    # --------------------------------------------------------
+
+    india_date = datetime.now(
+        ZoneInfo("Asia/Kolkata")
+    ).date()
+
+    print(
+        f"India date: {india_date}"
+    )
+
+    # --------------------------------------------------------
+    # OIS
+    #
+    # Run only Monday-Friday.
+    # Skip Saturday and Sunday.
+    # --------------------------------------------------------
+
+    if india_date.weekday() < 5:
+
+        print(
+            "Trading weekday — collecting OIS."
+        )
+
+        save_ois(
+            india_date
+        )
+
+    else:
+
+        print(
+            "Weekend — skipping OIS collection."
+        )
+
+    # --------------------------------------------------------
+    # G-sec
+    # --------------------------------------------------------
+
+    save_gsec()
+
+    # --------------------------------------------------------
+    # Finished
+    # --------------------------------------------------------
+
+    print(
+        "CCIL collection completed successfully."
+)
