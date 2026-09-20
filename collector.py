@@ -22,7 +22,7 @@ engine = create_engine(
 
 
 # ============================================================
-# CCIL URLs
+# CCIL URLS
 # ============================================================
 
 CCIL_MONEY_URL = (
@@ -34,7 +34,7 @@ CCIL_OIS_URL = (
     "https://www.ccilindia.com/"
     "interbank-inr-interest-rate-swaps"
     "?p_p_cacheability=cacheLevelPage"
-    "&p_p_id=CcilRealTimeMarketWatchMainPageAjax_CcilRealTimeMarketWatchAjaxPortlet_INSTANCE_qown"
+    "&p_p_id=CcilRealTimeMarketWatchMainPageAjax_CcilRealTimeMarketWatchMainPageAjaxPortlet_INSTANCE_qown"
     "&p_p_lifecycle=2"
     "&p_p_mode=view"
     "&p_p_resource_id=mainReport"
@@ -63,7 +63,7 @@ TRADINGVIEW_SYMBOLS = [
 
 
 # ============================================================
-# COMMON HTTP HEADERS
+# HTTP HEADERS
 # ============================================================
 
 SOURCE_HEADERS = {
@@ -86,19 +86,14 @@ def ensure_table():
             CREATE TABLE IF NOT EXISTS observations (
 
                 date DATE NOT NULL,
-
                 source TEXT NOT NULL,
-
                 series TEXT NOT NULL,
-
                 tenor TEXT NOT NULL DEFAULT '',
 
                 value DOUBLE PRECISION NOT NULL,
 
                 unit TEXT NOT NULL DEFAULT '%',
-
                 publication_time TIMESTAMPTZ,
-
                 source_url TEXT,
 
                 status TEXT NOT NULL DEFAULT 'published',
@@ -114,7 +109,7 @@ def ensure_table():
 
 
 # ============================================================
-# SAVE ONE OBSERVATION
+# SAVE OBSERVATION
 # ============================================================
 
 def save_observation(
@@ -142,7 +137,6 @@ def save_observation(
             source_url,
             status
         )
-
         VALUES
         (
             :date,
@@ -155,7 +149,6 @@ def save_observation(
             :source_url,
             'published'
         )
-
         ON CONFLICT
         (
             date,
@@ -163,7 +156,6 @@ def save_observation(
             series,
             tenor
         )
-
         DO UPDATE SET
 
             value = EXCLUDED.value,
@@ -270,8 +262,7 @@ def fetch_money_market():
     ):
 
         raise RuntimeError(
-            "Unexpected CCIL money-market "
-            f"columns: {table.columns.tolist()}"
+            "Unexpected CCIL money-market columns"
         )
 
     table["date"] = pd.to_datetime(
@@ -290,14 +281,12 @@ def fetch_money_market():
         .str.strip()
     )
 
-    table = table.dropna(
+    return table.dropna(
         subset=[
             "date",
             "value"
         ]
     )
-
-    return table
 
 
 def save_money_market():
@@ -331,17 +320,11 @@ def save_money_market():
             continue
 
         save_observation(
-
             obs_date=row["date"],
-
             source="CCIL",
-
             series=series,
-
             tenor="",
-
             value=row["value"],
-
             source_url=CCIL_MONEY_URL
         )
 
@@ -359,12 +342,17 @@ def save_money_market():
 def fetch_tradingview():
 
     payload = {
+
         "symbols": {
-            "tickers": TRADINGVIEW_SYMBOLS,
+
+            "tickers":
+                TRADINGVIEW_SYMBOLS,
+
             "query": {
                 "types": []
             }
         },
+
         "columns": [
             "name",
             "close",
@@ -394,9 +382,15 @@ def save_tradingview(reference_date):
     rows = fetch_tradingview()
 
     ticker_map = {
-        "TVC:US10Y": "US10Y",
-        "TVC:JP10Y": "JP10Y",
-        "TVC:CN10Y": "CN10Y",
+
+        "TVC:US10Y":
+            "US10Y",
+
+        "TVC:JP10Y":
+            "JP10Y",
+
+        "TVC:CN10Y":
+            "CN10Y"
     }
 
     count = 0
@@ -452,6 +446,7 @@ def fetch_ois():
     response.raise_for_status()
 
     try:
+
         data = response.json()
 
     except ValueError:
@@ -465,11 +460,13 @@ def fetch_ois():
         )
 
         print(
-            f"Content-Type: {response.headers.get('Content-Type')}"
+            f"Content-Type: "
+            f"{response.headers.get('Content-Type')}"
         )
 
         print(
-            f"Response preview: {response.text[:200]}"
+            f"Response preview: "
+            f"{response.text[:200]}"
         )
 
         return []
@@ -487,7 +484,8 @@ def fetch_ois():
         return []
 
     return json.loads(raw)
-    
+
+
 def save_ois(reference_date):
 
     rows = fetch_ois()
@@ -529,17 +527,11 @@ def save_ois(reference_date):
             continue
 
         save_observation(
-
             obs_date=reference_date,
-
             source="CCIL",
-
             series="OIS",
-
             tenor=tenor,
-
             value=float(value),
-
             source_url=CCIL_OIS_URL
         )
 
@@ -641,21 +633,21 @@ def save_gsec():
         ]
     )
 
-  wanted = {
+    # Dashboard tenor mapping
+    wanted = {
 
-    "2Y-3Y":
-        "3Y",
+        "2Y-3Y":
+            "3Y",
 
-    "4Y-5Y":
-        "5Y",
+        "4Y-5Y":
+            "5Y",
 
-    "9Y-10Y":
-        "10Y",
+        "9Y-10Y":
+            "10Y",
 
-    "28Y-30Y":
-        "30Y"
-   
-   }
+        "28Y-30Y":
+            "30Y"
+    }
 
     count = 0
 
@@ -673,17 +665,11 @@ def save_gsec():
             continue
 
         save_observation(
-
             obs_date=row[date_col],
-
             source="CCIL",
-
             series="GSEC",
-
             tenor=dashboard_tenor,
-
             value=row[ytm_col],
-
             source_url=CCIL_GSEC_URL
         )
 
@@ -704,7 +690,6 @@ if __name__ == "__main__":
         "Starting CCIL market-data collector..."
     )
 
-    # Create database table if required
     ensure_table()
 
     # --------------------------------------------------------
@@ -714,7 +699,7 @@ if __name__ == "__main__":
     save_money_market()
 
     # --------------------------------------------------------
-    # Determine today's India date
+    # India date
     # --------------------------------------------------------
 
     india_date = datetime.now(
@@ -729,30 +714,29 @@ if __name__ == "__main__":
     # Global bonds
     # --------------------------------------------------------
 
-    save_tradingview(india_date)
+    save_tradingview(
+        india_date
+    )
 
     # --------------------------------------------------------
     # OIS
-    #
-    # Run only Monday-Friday.
-    # Skip Saturday and Sunday.
     # --------------------------------------------------------
 
     if india_date.weekday() < 5:
 
         print(
-        "Trading weekday — collecting OIS."
-    )
+            "Trading weekday — collecting OIS."
+        )
 
         save_ois(
-        india_date
-    )
+            india_date
+        )
 
     else:
 
         print(
-        "Weekend — skipping OIS collection."
-    )
+            "Weekend — skipping OIS collection."
+        )
 
     # --------------------------------------------------------
     # G-sec
