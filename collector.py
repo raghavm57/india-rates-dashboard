@@ -34,7 +34,7 @@ CCIL_OIS_URL = (
     "https://www.ccilindia.com/"
     "interbank-inr-interest-rate-swaps"
     "?p_p_cacheability=cacheLevelPage"
-    "&p_p_id=CcilRealTimeMarketWatchMainPageAjax_CcilRealTimeMarketWatchMainPageAjaxPortlet_INSTANCE_qown"
+    "&p_p_id=CcilRealTimeMarketWatchMainPageAjax_CcilRealTimeMarketWatchAjaxPortlet_INSTANCE_qown"
     "&p_p_lifecycle=2"
     "&p_p_mode=view"
     "&p_p_resource_id=mainReport"
@@ -45,6 +45,7 @@ CCIL_GSEC_URL = (
     "https://www.ccilindia.com/"
     "en/tenorwise-indicative-yields"
 )
+
 
 # ============================================================
 # TRADINGVIEW
@@ -59,6 +60,8 @@ TRADINGVIEW_SYMBOLS = [
     "TVC:JP10Y",
     "TVC:CN10Y",
 ]
+
+
 # ============================================================
 # COMMON HTTP HEADERS
 # ============================================================
@@ -244,15 +247,12 @@ def fetch_money_market():
         name = col.lower()
 
         if name == "date":
-
             column_map[col] = "date"
 
         elif name == "type":
-
             column_map[col] = "type"
 
         elif "wtd avg" in name:
-
             column_map[col] = "value"
 
     table = table.rename(
@@ -351,6 +351,11 @@ def save_money_market():
         f"Money-market observations saved: {count}"
     )
 
+
+# ============================================================
+# TRADINGVIEW GLOBAL BONDS
+# ============================================================
+
 def fetch_tradingview():
 
     payload = {
@@ -368,7 +373,7 @@ def fetch_tradingview():
     }
 
     response = requests.post(
-        "https://scanner.tradingview.com/bonds/scan",
+        TRADINGVIEW_SCANNER_URL,
         json=payload,
         headers=SOURCE_HEADERS,
         timeout=30
@@ -378,10 +383,15 @@ def fetch_tradingview():
 
     data = response.json()
 
-    return data.get("data", [])
+    return data.get(
+        "data",
+        []
+    )
+
 
 def save_tradingview(reference_date):
-        rows = fetch_tradingview()
+
+    rows = fetch_tradingview()
 
     ticker_map = {
         "TVC:US10Y": "US10Y",
@@ -398,7 +408,10 @@ def save_tradingview(reference_date):
         if ticker not in ticker_map:
             continue
 
-        data = row.get("d", [])
+        data = row.get(
+            "d",
+            []
+        )
 
         if len(data) < 2:
             continue
@@ -422,6 +435,8 @@ def save_tradingview(reference_date):
     print(
         f"TradingView global bond observations saved: {count}"
     )
+
+
 # ============================================================
 # OIS
 # ============================================================
@@ -686,15 +701,12 @@ if __name__ == "__main__":
         f"India date: {india_date}"
     )
 
-# ============================================================
-# GLOBAL BONDS
-# ============================================================
+    # --------------------------------------------------------
+    # Global bonds
+    # --------------------------------------------------------
 
-save_tradingview(india_date)
+    save_tradingview(india_date)
 
-# ============================================================
-# OIS
-# ============================================================
     # --------------------------------------------------------
     # OIS
     #
@@ -702,8 +714,13 @@ save_tradingview(india_date)
     # Skip Saturday and Sunday.
     # --------------------------------------------------------
 
-    print("DEBUG — collecting OIS regardless of weekday.")
-    save_ois(india_date)
+    print(
+        "DEBUG — collecting OIS regardless of weekday."
+    )
+
+    save_ois(
+        india_date
+    )
 
     # --------------------------------------------------------
     # G-sec
@@ -717,4 +734,4 @@ save_tradingview(india_date)
 
     print(
         "CCIL collection completed successfully."
-)
+    )
