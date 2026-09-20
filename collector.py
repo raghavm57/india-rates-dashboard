@@ -453,10 +453,11 @@ def fetch_ois():
 
     try:
         data = response.json()
+
     except ValueError:
 
         print(
-            "CCIL OIS returned non-JSON response."
+            "CCIL OIS unavailable — skipping OIS."
         )
 
         print(
@@ -471,9 +472,7 @@ def fetch_ois():
             f"Response preview: {response.text[:200]}"
         )
 
-        raise RuntimeError(
-            "CCIL OIS endpoint did not return JSON"
-        )
+        return []
 
     raw = data.get(
         "resultMiborOis"
@@ -481,15 +480,14 @@ def fetch_ois():
 
     if raw is None:
 
-        raise RuntimeError(
-            "CCIL OIS data not found"
+        print(
+            "CCIL OIS data not found — skipping OIS."
         )
 
-    rows = json.loads(raw)
+        return []
 
-    return rows
-
-
+    return json.loads(raw)
+    
 def save_ois(reference_date):
 
     rows = fetch_ois()
