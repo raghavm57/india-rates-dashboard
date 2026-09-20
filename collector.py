@@ -685,34 +685,12 @@ if __name__ == "__main__":
     print(
         f"India date: {india_date}"
     )
-print(
-    f"India date: {india_date}"
-)
 
-print("Testing TradingView global bonds...")
+# ============================================================
+# GLOBAL BONDS
+# ============================================================
 
-try:
-    tv_rows = fetch_tradingview()
-
-    print(
-        "TradingView rows received:",
-        len(tv_rows)
-    )
-
-    print(
-        json.dumps(
-            tv_rows,
-            indent=2
-        )
-    )
-
-except Exception as e:
-
-    print(
-        "TradingView test failed:",
-        str(e)
-    )
-
+save_tradingview(india_date)
 
 # ============================================================
 # OIS
