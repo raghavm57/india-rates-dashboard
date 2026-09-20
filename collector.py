@@ -58,8 +58,6 @@ TRADINGVIEW_SYMBOLS = [
     "TVC:US10Y",
     "TVC:JP10Y",
     "TVC:CN10Y",
-    "TVC:GOLD",
-    "TVC:UKOIL",
 ]
 # ============================================================
 # COMMON HTTP HEADERS
