@@ -504,11 +504,14 @@ if __name__ == "__main__":
         ZoneInfo("Asia/Kolkata")
     ).date()
 
-    # OIS
+    # OIS — collect only on Indian trading weekdays
+if india_date.weekday() < 5:
     save_ois(india_date)
+else:
+    print("Weekend — skipping OIS collection.")
 
-    # G-sec
-    save_gsec()
+# G-sec
+save_gsec()
 
     print(
         "CCIL collection completed successfully."
