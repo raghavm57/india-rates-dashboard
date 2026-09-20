@@ -451,7 +451,29 @@ def fetch_ois():
 
     response.raise_for_status()
 
-    data = response.json()
+    try:
+        data = response.json()
+    except ValueError:
+
+        print(
+            "CCIL OIS returned non-JSON response."
+        )
+
+        print(
+            f"Status: {response.status_code}"
+        )
+
+        print(
+            f"Content-Type: {response.headers.get('Content-Type')}"
+        )
+
+        print(
+            f"Response preview: {response.text[:200]}"
+        )
+
+        raise RuntimeError(
+            "CCIL OIS endpoint did not return JSON"
+        )
 
     raw = data.get(
         "resultMiborOis"
