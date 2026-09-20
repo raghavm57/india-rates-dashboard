@@ -611,21 +611,8 @@ if __name__ == "__main__":
     # Skip Saturday and Sunday.
     # --------------------------------------------------------
 
-    if india_date.weekday() < 5:
-
-        print(
-            "Trading weekday — collecting OIS."
-        )
-
-        save_ois(
-            india_date
-        )
-
-    else:
-
-        print(
-            "Weekend — skipping OIS collection."
-        )
+    print("DEBUG — collecting OIS regardless of weekday.")
+save_ois(india_date)
 
     # --------------------------------------------------------
     # G-sec
