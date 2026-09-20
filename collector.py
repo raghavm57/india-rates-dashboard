@@ -612,7 +612,7 @@ if __name__ == "__main__":
     # --------------------------------------------------------
 
     print("DEBUG — collecting OIS regardless of weekday.")
-save_ois(india_date)
+    save_ois(india_date)
 
     # --------------------------------------------------------
     # G-sec
