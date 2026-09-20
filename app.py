@@ -8,14 +8,16 @@ st.set_page_config(
 )
 
 DATABASE_URL = st.secrets["DATABASE_URL"]
+
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True
 )
 
-# --------------------------------------------------
-# Load data
-# --------------------------------------------------
+
+# ============================================================
+# LOAD DATA
+# ============================================================
 
 df = pd.read_sql(
     text("""
@@ -34,47 +36,84 @@ df = pd.read_sql(
 )
 
 if df.empty:
+
     st.info(
         "PostgreSQL is connected, but no market observations "
         "have been loaded yet."
     )
+
     st.stop()
 
-df["date"] = pd.to_datetime(df["date"])
 
-# Latest available market date
+df["date"] = pd.to_datetime(
+    df["date"]
+)
+
+
+# ============================================================
+# GLOBAL LATEST DATE
+# ============================================================
+
 latest_date = df["date"].max()
 
-# Previous available dates
-available_dates = sorted(
-    df["date"].drop_duplicates(),
-    reverse=True
-)
 
-yesterday_date = (
-    available_dates[1]
-    if len(available_dates) > 1
-    else None
-)
+# ============================================================
+# HELPER FUNCTIONS
+# ============================================================
 
-one_week_target = latest_date - pd.Timedelta(days=7)
+def get_market_dates(source, series):
 
-week_dates = [
-    d for d in available_dates
-    if d <= one_week_target
-]
+    market_df = df[
+        (df["source"] == source)
+        & (df["series"] == series)
+    ]
 
-one_week_date = (
-    week_dates[0]
-    if week_dates
-    else None
-)
+    dates = sorted(
+        market_df["date"].drop_duplicates(),
+        reverse=True
+    )
 
-# --------------------------------------------------
-# Helper functions
-# --------------------------------------------------
+    if not dates:
+        return None, None, None
 
-def get_value(source, series, tenor, date):
+    today_date = dates[0]
+
+    yesterday_date = (
+        dates[1]
+        if len(dates) > 1
+        else None
+    )
+
+    one_week_target = (
+        today_date - pd.Timedelta(days=7)
+    )
+
+    week_dates = [
+        d
+        for d in dates
+        if d <= one_week_target
+    ]
+
+    one_week_date = (
+        week_dates[0]
+        if week_dates
+        else None
+    )
+
+    return (
+        today_date,
+        yesterday_date,
+        one_week_date
+    )
+
+
+def get_value(
+    source,
+    series,
+    tenor,
+    date
+):
+
     if date is None:
         return None
 
@@ -88,34 +127,58 @@ def get_value(source, series, tenor, date):
     if x.empty:
         return None
 
-    return float(x.iloc[0]["value"])
+    return float(
+        x.iloc[0]["value"]
+    )
 
 
 def format_value(value):
+
     if value is None:
         return "—"
 
     return f"{value:.3f}"
 
 
-def format_change(current, previous, rate=True):
+def format_change(
+    current,
+    previous,
+    rate=True
+):
+
     if current is None or previous is None:
         return "—"
 
     change = current - previous
 
     if rate:
+
         return f"{change * 100:+.1f} bps"
 
     return f"{change:+.3f}"
 
 
-def market_row(name, source, series, tenor=""):
+def market_row(
+    name,
+    source,
+    series,
+    tenor=""
+):
+
+    (
+        today_date,
+        yesterday_date,
+        one_week_date
+    ) = get_market_dates(
+        source,
+        series
+    )
+
     today = get_value(
         source,
         series,
         tenor,
-        latest_date
+        today_date
     )
 
     yesterday = get_value(
@@ -133,14 +196,26 @@ def market_row(name, source, series, tenor=""):
     )
 
     return {
+
         "Particulars": name,
-        "Today": format_value(today),
-        "Yesterday": format_value(yesterday),
-        "1 Week": format_value(week),
+
+        "Today": format_value(
+            today
+        ),
+
+        "Yesterday": format_value(
+            yesterday
+        ),
+
+        "1 Week": format_value(
+            week
+        ),
+
         "Δ 1D": format_change(
             today,
             yesterday
         ),
+
         "Δ 1W": format_change(
             today,
             week
@@ -148,38 +223,54 @@ def market_row(name, source, series, tenor=""):
     }
 
 
-# --------------------------------------------------
-# Header
-# --------------------------------------------------
+# ============================================================
+# HEADER
+# ============================================================
 
-st.title("India Rates Dashboard")
+st.title(
+    "India Rates Dashboard"
+)
 
 st.caption(
     f"Latest available market date: "
     f"{latest_date.strftime('%d-%b-%Y')}"
 )
 
-# --------------------------------------------------
-# OIS
-# --------------------------------------------------
 
-st.subheader("OIS Curve")
+# ============================================================
+# OIS
+# ============================================================
+
+st.subheader(
+    "OIS Curve"
+)
 
 ois_tenors = [
+
     ("OIS 1M", "1M"),
+
     ("OIS 2M", "2M"),
+
     ("OIS 3M", "3M"),
+
     ("OIS 6M", "6M"),
+
     ("OIS 1Y", "1Y"),
+
     ("OIS 2Y", "2Y"),
+
     ("OIS 3Y", "3Y"),
+
     ("OIS 5Y", "5Y"),
-    ("OIS 10Y", "10Y"),
+
+    ("OIS 10Y", "10Y")
 ]
+
 
 ois_rows = []
 
 for name, tenor in ois_tenors:
+
     ois_rows.append(
         market_row(
             name,
@@ -189,28 +280,41 @@ for name, tenor in ois_tenors:
         )
     )
 
+
 st.dataframe(
     pd.DataFrame(ois_rows),
     use_container_width=True,
     hide_index=True
 )
 
-# --------------------------------------------------
-# Money Market
-# --------------------------------------------------
 
-st.subheader("Money Market")
+# ============================================================
+# MONEY MARKET
+# ============================================================
+
+st.subheader(
+    "Money Market"
+)
 
 money_market = [
+
     ("Call WACR", "CALL_WACR"),
+
     ("TREPS WACR", "TREPS_WACR"),
+
     ("Repo WACR", "REPO_WACR"),
-    ("Special Repo WACR", "SPECIAL_REPO_WACR"),
+
+    (
+        "Special Repo WACR",
+        "SPECIAL_REPO_WACR"
+    )
 ]
+
 
 money_rows = []
 
 for name, series in money_market:
+
     money_rows.append(
         market_row(
             name,
@@ -220,28 +324,38 @@ for name, series in money_market:
         )
     )
 
+
 st.dataframe(
     pd.DataFrame(money_rows),
     use_container_width=True,
     hide_index=True
 )
 
-# --------------------------------------------------
-# G-Sec
-# --------------------------------------------------
 
-st.subheader("Government Securities")
+# ============================================================
+# GOVERNMENT SECURITIES
+# ============================================================
+
+st.subheader(
+    "Government Securities"
+)
 
 gsec_tenors = [
+
     ("3Y G-Sec", "3Y"),
+
     ("5Y G-Sec", "5Y"),
+
     ("10Y G-Sec", "10Y"),
-    ("30Y G-Sec", "30Y"),
+
+    ("30Y G-Sec", "30Y")
 ]
+
 
 gsec_rows = []
 
 for name, tenor in gsec_tenors:
+
     gsec_rows.append(
         market_row(
             name,
@@ -251,26 +365,70 @@ for name, tenor in gsec_tenors:
         )
     )
 
+
 st.dataframe(
     pd.DataFrame(gsec_rows),
     use_container_width=True,
     hide_index=True
 )
 
-# --------------------------------------------------
-# Database information
-# --------------------------------------------------
+
+# ============================================================
+# GLOBAL BONDS
+# ============================================================
+
+st.subheader(
+    "Global Bonds"
+)
+
+global_bonds = [
+
+    ("US 10Y", "US10Y"),
+
+    ("Japan 10Y", "JP10Y"),
+
+    ("China 10Y", "CN10Y")
+]
+
+
+global_rows = []
+
+for name, tenor in global_bonds:
+
+    global_rows.append(
+        market_row(
+            name,
+            "TradingView",
+            "GLOBAL_BOND",
+            tenor
+        )
+    )
+
+
+st.dataframe(
+    pd.DataFrame(global_rows),
+    use_container_width=True,
+    hide_index=True
+)
+
+
+# ============================================================
+# DATABASE INFORMATION
+# ============================================================
 
 st.divider()
 
 st.caption(
-    f"Today: {latest_date.strftime('%d-%b-%Y')}  •  "
-    f"Yesterday: "
-    f"{yesterday_date.strftime('%d-%b-%Y') if yesterday_date is not None else '—'}  •  "
-    f"1 Week: "
-    f"{one_week_date.strftime('%d-%b-%Y') if one_week_date is not None else '—'}"
+    f"Global latest date: "
+    f"{latest_date.strftime('%d-%b-%Y')}"
 )
 
 st.caption(
-    "Source: CCIL • Database: Neon PostgreSQL"
+    "Each market section uses its own latest available "
+    "observation date."
+)
+
+st.caption(
+    "Source: CCIL / TradingView • "
+    "Database: Neon PostgreSQL"
 )
