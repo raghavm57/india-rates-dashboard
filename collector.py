@@ -46,7 +46,21 @@ CCIL_GSEC_URL = (
     "en/tenorwise-indicative-yields"
 )
 
+# ============================================================
+# TRADINGVIEW
+# ============================================================
 
+TRADINGVIEW_SCANNER_URL = (
+    "https://scanner.tradingview.com/bonds/scan"
+)
+
+TRADINGVIEW_SYMBOLS = [
+    "TVC:US10Y",
+    "TVC:JP10Y",
+    "TVC:CN10Y",
+    "TVC:GOLD",
+    "TVC:UKOIL",
+]
 # ============================================================
 # COMMON HTTP HEADERS
 # ============================================================
