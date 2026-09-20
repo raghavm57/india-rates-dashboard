@@ -379,13 +379,49 @@ def fetch_tradingview():
     data = response.json()
 
     return data.get("data", [])
-   def fetch_tradingview():
-    ...
-    return data.get("data", [])
-
 
 def save_tradingview(reference_date):
-    ... 
+        rows = fetch_tradingview()
+
+    ticker_map = {
+        "TVC:US10Y": "US10Y",
+        "TVC:JP10Y": "JP10Y",
+        "TVC:CN10Y": "CN10Y",
+    }
+
+    count = 0
+
+    for row in rows:
+
+        ticker = row.get("s")
+
+        if ticker not in ticker_map:
+            continue
+
+        data = row.get("d", [])
+
+        if len(data) < 2:
+            continue
+
+        value = data[1]
+
+        if value is None:
+            continue
+
+        save_observation(
+            obs_date=reference_date,
+            source="TradingView",
+            series="GLOBAL_BOND",
+            tenor=ticker_map[ticker],
+            value=float(value),
+            source_url="https://www.tradingview.com/"
+        )
+
+        count += 1
+
+    print(
+        f"TradingView global bond observations saved: {count}"
+    )
 # ============================================================
 # OIS
 # ============================================================
