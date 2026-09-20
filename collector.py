@@ -353,7 +353,34 @@ def save_money_market():
         f"Money-market observations saved: {count}"
     )
 
+def fetch_tradingview():
 
+    payload = {
+        "symbols": {
+            "tickers": TRADINGVIEW_SYMBOLS,
+            "query": {
+                "types": []
+            }
+        },
+        "columns": [
+            "name",
+            "close",
+            "change"
+        ]
+    }
+
+    response = requests.post(
+        "https://scanner.tradingview.com/bonds/scan",
+        json=payload,
+        headers=SOURCE_HEADERS,
+        timeout=30
+    )
+
+    response.raise_for_status()
+
+    data = response.json()
+
+    return data.get("data", [])
 # ============================================================
 # OIS
 # ============================================================
