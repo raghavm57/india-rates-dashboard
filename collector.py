@@ -379,6 +379,13 @@ def fetch_tradingview():
     data = response.json()
 
     return data.get("data", [])
+   def fetch_tradingview():
+    ...
+    return data.get("data", [])
+
+
+def save_tradingview(reference_date):
+    ... 
 # ============================================================
 # OIS
 # ============================================================
