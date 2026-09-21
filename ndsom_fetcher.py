@@ -1,13 +1,10 @@
-print("STARTING NDS-OM BROWSER TEST")
+print("STARTING NDS-OM NETWORK TEST")
 
 from playwright.sync_api import sync_playwright
-import pandas as pd
 
 URL = "https://www.ccilindia.com/market-watch"
 
 with sync_playwright() as p:
-
-    print("Launching Chromium...")
 
     browser = p.chromium.launch(headless=True)
 
@@ -15,37 +12,56 @@ with sync_playwright() as p:
         user_agent="Mozilla/5.0"
     )
 
-    print("Opening CCIL Market Watch...")
+    # Capture network requests
+    def request_handler(request):
+        resource = request.resource_type
+
+        if resource in ["xhr", "fetch"]:
+            print("\nXHR/FETCH:")
+            print(request.method, request.url)
+
+    page.on("request", request_handler)
+
+    print("Opening CCIL...")
 
     page.goto(
         URL,
-        wait_until="networkidle",
+        wait_until="domcontentloaded",
         timeout=60000
     )
 
-    print("Page loaded")
+    print("Initial page loaded")
 
-    # Give CCIL's JavaScript additional time
-    page.wait_for_timeout(5000)
+    # Allow JavaScript/AJAX to populate market data
+    page.wait_for_timeout(15000)
 
-    html = page.content()
+    print("\n==============================")
+    print("CHECKING TABLES")
+    print("==============================")
 
-    print("Rendered HTML length:", len(html))
+    tables = page.locator("table")
 
-    tables = pd.read_html(html)
+    print("TABLE COUNT:", tables.count())
 
-    print("TABLES FOUND:", len(tables))
+    for i in range(tables.count()):
 
-    for i, table in enumerate(tables):
+        table = tables.nth(i)
 
-        print("\n====================")
+        print("\n------------------------------")
         print("TABLE:", i)
-        print("====================")
+        print("------------------------------")
 
-        print(
-            table.head(10).to_string()
-        )
+        rows = table.locator("tr")
+
+        print("ROWS:", rows.count())
+
+        for j in range(min(rows.count(), 10)):
+
+            text = rows.nth(j).inner_text().strip()
+
+            if text:
+                print("ROW:", text.replace("\n", " | "))
 
     browser.close()
 
-print("\nNDS-OM BROWSER TEST FINISHED")
+print("\nNDS-OM NETWORK TEST FINISHED")
