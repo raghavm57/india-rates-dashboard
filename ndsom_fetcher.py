@@ -1,40 +1,51 @@
+print("STARTING NDS-OM BROWSER TEST")
 
-print("STARTING NDS-OM TEST")
-
-import requests
+from playwright.sync_api import sync_playwright
 import pandas as pd
-from io import StringIO
 
 URL = "https://www.ccilindia.com/market-watch"
 
-headers = {
-    "User-Agent": "Mozilla/5.0"
-}
+with sync_playwright() as p:
 
-print("Requesting CCIL...")
+    print("Launching Chromium...")
 
-response = requests.get(
-    URL,
-    headers=headers,
-    timeout=30
-)
+    browser = p.chromium.launch(headless=True)
 
-print("HTTP STATUS:", response.status_code)
-print("CONTENT TYPE:", response.headers.get("Content-Type"))
-print("RESPONSE LENGTH:", len(response.text))
+    page = browser.new_page(
+        user_agent="Mozilla/5.0"
+    )
 
-tables = pd.read_html(
-    StringIO(response.text)
-)
+    print("Opening CCIL Market Watch...")
 
-print("TABLES FOUND:", len(tables))
+    page.goto(
+        URL,
+        wait_until="networkidle",
+        timeout=60000
+    )
 
-for i, table in enumerate(tables):
+    print("Page loaded")
 
-    print("\n====================")
-    print("TABLE:", i)
-    print("====================")
+    # Give CCIL's JavaScript additional time
+    page.wait_for_timeout(5000)
 
-    print(table.head(5).to_string())
+    html = page.content()
 
-print("\nNDS-OM TEST FINISHED")
+    print("Rendered HTML length:", len(html))
+
+    tables = pd.read_html(html)
+
+    print("TABLES FOUND:", len(tables))
+
+    for i, table in enumerate(tables):
+
+        print("\n====================")
+        print("TABLE:", i)
+        print("====================")
+
+        print(
+            table.head(10).to_string()
+        )
+
+    browser.close()
+
+print("\nNDS-OM BROWSER TEST FINISHED")
