@@ -19,9 +19,9 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install Python dependencies
+      - name: Install dependencies
         run: |
-          pip install pandas playwright lxml
+          pip install playwright
 
       - name: Install Chromium
         run: |
