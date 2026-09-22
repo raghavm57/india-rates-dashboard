@@ -1,4 +1,4 @@
-print("STARTING NDS-OM CLEAN FETCH")
+print("STARTING NDS-OM G-SEC + T-BILL FETCH")
 
 from playwright.sync_api import sync_playwright
 import json
@@ -38,25 +38,19 @@ with sync_playwright() as p:
 
     print("Page loaded")
 
-    # Allow JavaScript/AJAX to populate NDS-OM data
-    page.wait_for_timeout(15000)
+    page.wait_for_timeout(10000)
+
+
+    # =========================================================
+    # G-SEC
+    # =========================================================
 
     tables = page.locator("table")
 
-    print("TABLE COUNT:", tables.count())
-
-
-    # =========================================================
-    # 1. G-SEC DATA
-    # =========================================================
-
-    print("\n==============================")
-    print("G-SEC DATA")
-    print("==============================")
+    print("INITIAL TABLE COUNT:", tables.count())
 
     gsecs = []
 
-    # Table 0 = Central Government Securities
     gsec_table = tables.nth(0)
 
     gsec_rows = gsec_table.locator("tr")
@@ -69,24 +63,10 @@ with sync_playwright() as p:
             gsec_rows.nth(i)
         )
 
-        # Expected:
-        # 0 Security Description
-        # 1 Maturity Date
-        # 2 Bid Amt
-        # 3 Bid Yield
-        # 4 Bid Price
-        # 5 Offer Price
-        # 6 Offer Yield
-        # 7 Offer Amt
-        # 8 LTP
-        # 9 LTY
-        # 10 LTA
-        # 11 TTA
-
         if len(values) < 12:
             continue
 
-        security = {
+        gsec = {
             "security_description": values[0],
             "maturity_date": values[1],
             "ltp": values[8],
@@ -95,22 +75,23 @@ with sync_playwright() as p:
             "tta": values[11]
         }
 
-        gsecs.append(security)
+        gsecs.append(gsec)
 
 
-    print("\nCLEAN G-SEC DATA")
+    print("\n==============================")
+    print("CLEAN G-SEC DATA")
     print("==============================")
 
-    for security in gsecs:
+    for gsec in gsecs:
 
         print(
-            security["security_description"],
+            gsec["security_description"],
             "|",
-            security["maturity_date"],
+            gsec["maturity_date"],
             "| LTP:",
-            security["ltp"],
+            gsec["ltp"],
             "| LTY:",
-            security["lty"]
+            gsec["lty"]
         )
 
     print(
@@ -120,63 +101,93 @@ with sync_playwright() as p:
 
 
     # =========================================================
-    # 2. FIND T-BILL TABLE
+    # ACTIVATE T-BILLS TAB
     # =========================================================
 
     print("\n==============================")
-    print("SEARCHING FOR T-BILL TABLE")
+    print("OPENING T-BILLS MARKET WATCH")
     print("==============================")
 
 
-    tbill_table_index = None
+    # Find the T-Bills tab/link
+    tbill_links = page.get_by_text(
+        "T-Bills Market Watch",
+        exact=False
+    )
 
-    for i in range(1, tables.count()):
+    print(
+        "T-BILL TAB COUNT:",
+        tbill_links.count()
+    )
+
+
+    if tbill_links.count() > 0:
+
+        print("Clicking T-Bills tab...")
+
+        tbill_links.first.click()
+
+        # Allow AJAX request to complete
+        page.wait_for_timeout(10000)
+
+    else:
+
+        print("T-Bills tab not found")
+
+
+    # =========================================================
+    # READ T-BILL TABLES AFTER TAB ACTIVATION
+    # =========================================================
+
+    tables = page.locator("table")
+
+    print(
+        "\nTABLE COUNT AFTER T-BILL CLICK:",
+        tables.count()
+    )
+
+
+    tbills = []
+
+
+    for i in range(tables.count()):
 
         table = tables.nth(i)
 
         rows = table.locator("tr")
 
-        table_text = table.inner_text().upper()
-
         print(
-            "TABLE",
+            "\nTABLE",
             i,
             "| ROWS:",
             rows.count()
         )
 
-        # Look for DTB securities
-        if "DTB" in table_text:
 
-            tbill_table_index = i
+        for j in range(
+            min(rows.count(), 5)
+        ):
 
-            print(
-                "T-BILL TABLE FOUND:",
-                i
+            text = (
+                rows.nth(j)
+                .inner_text()
+                .strip()
+                .replace("\n", " | ")
             )
 
-            break
+            if text:
+
+                print(
+                    "ROW:",
+                    text
+                )
 
 
-    # =========================================================
-    # 3. EXTRACT T-BILLS
-    # =========================================================
-
-    tbills = []
-
-
-    if tbill_table_index is not None:
-
-        tbill_table = tables.nth(
-            tbill_table_index
-        )
-
-        tbill_rows = tbill_table.locator("tr")
-
-        for i in range(1, tbill_rows.count()):
+        # Look for DTB rows
+        for j in range(1, rows.count()):
 
             values = get_row_values(
-                tbill_rows.nth(i)
+                rows.nth(j)
             )
 
             if len(values) < 12:
@@ -184,7 +195,6 @@ with sync_playwright() as p:
 
             description = values[0].upper()
 
-            # Only keep actual DTB securities
             if "DTB" not in description:
                 continue
 
@@ -199,6 +209,10 @@ with sync_playwright() as p:
 
             tbills.append(tbill)
 
+
+    # =========================================================
+    # T-BILL OUTPUT
+    # =========================================================
 
     print("\n==============================")
     print("CLEAN T-BILL DATA")
@@ -225,7 +239,7 @@ with sync_playwright() as p:
 
 
     # =========================================================
-    # 4. FINAL JSON
+    # FINAL JSON
     # =========================================================
 
     output = {
@@ -249,4 +263,4 @@ with sync_playwright() as p:
     browser.close()
 
 
-print("\nNDS-OM CLEAN FETCH FINISHED")
+print("\nNDS-OM FETCH FINISHED")
