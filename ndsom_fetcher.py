@@ -1,11 +1,89 @@
 import asyncio
-import json
-import re
+from datetime import datetime, date, timedelta
+from zoneinfo import ZoneInfo
 
 from playwright.async_api import async_playwright
 
 
 URL = "https://www.ccilindia.com/market-watch"
+
+IST = ZoneInfo("Asia/Kolkata")
+
+
+def parse_date(value):
+
+    try:
+        return datetime.strptime(
+            value.strip(),
+            "%d/%m/%Y"
+        ).date()
+
+    except Exception:
+        return None
+
+
+def select_representative_tbill(
+    tbills,
+    tenor_days
+):
+
+    today = datetime.now(IST).date()
+
+    target_date = today + timedelta(
+        days=tenor_days
+    )
+
+    candidates = []
+
+    for item in tbills:
+
+        maturity = parse_date(
+            item["maturity_date"]
+        )
+
+        if maturity is None:
+            continue
+
+        if maturity <= today:
+            continue
+
+        description = (
+            item["security_description"]
+            .upper()
+        )
+
+        if tenor_days == 91:
+            if not description.startswith("091 DTB"):
+                continue
+
+        elif tenor_days == 182:
+            if not description.startswith("182 DTB"):
+                continue
+
+        elif tenor_days == 364:
+            if not description.startswith("364 DTB"):
+                continue
+
+        difference = abs(
+            (maturity - target_date).days
+        )
+
+        candidates.append(
+            (
+                difference,
+                maturity,
+                item
+            )
+        )
+
+    if not candidates:
+        return None
+
+    candidates.sort(
+        key=lambda x: x[0]
+    )
+
+    return candidates[0][2]
 
 
 async def main():
@@ -18,96 +96,13 @@ async def main():
 
         page = await browser.new_page()
 
-        # ---------------------------------------------------------
-        # NETWORK DEBUGGING
-        # ---------------------------------------------------------
-
-        print("\n================ NETWORK LOG ================\n")
-
-        async def log_request(request):
-
-            if request.resource_type in [
-                "xhr",
-                "fetch"
-            ]:
-
-                print(
-                    f"REQUEST | {request.method} | "
-                    f"{request.resource_type} | "
-                    f"{request.url}"
-                )
-
-        async def log_response(response):
-
-            request = response.request
-
-            if request.resource_type in [
-                "xhr",
-                "fetch"
-            ]:
-
-                print(
-                    f"RESPONSE | {response.status} | "
-                    f"{request.resource_type} | "
-                    f"{response.url}"
-                )
-
-                # Print response preview for likely data calls
-                url_lower = response.url.lower()
-
-                interesting = any(
-                    word in url_lower
-                    for word in [
-                        "market",
-                        "watch",
-                        "bill",
-                        "tbill",
-                        "security",
-                        "ndsom",
-                        "search",
-                        "trade"
-                    ]
-                )
-
-                if interesting:
-
-                    try:
-
-                        text = await response.text()
-
-                        preview = text[:1000]
-
-                        print(
-                            "RESPONSE BODY PREVIEW:"
-                        )
-
-                        print(preview)
-
-                        print(
-                            "\n----------------------------------------\n"
-                        )
-
-                    except Exception as e:
-
-                        print(
-                            f"Could not read response body: {e}"
-                        )
-
-        page.on(
-            "request",
-            log_request
-        )
-
-        page.on(
-            "response",
-            log_response
-        )
-
-        # ---------------------------------------------------------
+        # =========================================================
         # OPEN CCIL
-        # ---------------------------------------------------------
+        # =========================================================
 
-        print("\nOpening CCIL Market Watch...\n")
+        print(
+            "\nOpening CCIL Market Watch...\n"
+        )
 
         await page.goto(
             URL,
@@ -115,19 +110,17 @@ async def main():
             timeout=60000
         )
 
-        await page.wait_for_timeout(8000)
-
-        print(
-            "PAGE LOADED:"
+        await page.wait_for_timeout(
+            8000
         )
 
         print(
-            page.url
+            f"PAGE: {page.url}"
         )
 
-        # ---------------------------------------------------------
+        # =========================================================
         # G-SEC EXTRACTION
-        # ---------------------------------------------------------
+        # =========================================================
 
         print(
             "\n================ G-SEC DATA ================\n"
@@ -168,23 +161,25 @@ async def main():
                     continue
 
                 security = cells[0]
-                maturity = cells[1]
-
-                ltp = cells[8]
-                lty = cells[9]
-                lta = cells[10] if len(cells) > 10 else ""
-                tta = cells[11] if len(cells) > 11 else ""
 
                 if not security:
                     continue
 
                 record = {
                     "security_description": security,
-                    "maturity_date": maturity,
-                    "ltp": ltp,
-                    "lty": lty,
-                    "lta": lta,
-                    "tta": tta
+                    "maturity_date": cells[1],
+                    "ltp": cells[8],
+                    "lty": cells[9],
+                    "lta": (
+                        cells[10]
+                        if len(cells) > 10
+                        else ""
+                    ),
+                    "tta": (
+                        cells[11]
+                        if len(cells) > 11
+                        else ""
+                    )
                 }
 
                 gsec_data.append(
@@ -193,24 +188,23 @@ async def main():
 
                 print(
                     f"{security} | "
-                    f"{maturity} | "
-                    f"LTY: {lty} | "
-                    f"LTP: {ltp}"
+                    f"{cells[1]} | "
+                    f"LTY: {cells[9]} | "
+                    f"LTP: {cells[8]}"
                 )
 
         print(
-            f"\nTOTAL G-SECS: {len(gsec_data)}"
+            f"\nTOTAL G-SECS: "
+            f"{len(gsec_data)}"
         )
 
-        # ---------------------------------------------------------
+        # =========================================================
         # FIND T-BILL TAB
-        # ---------------------------------------------------------
+        # =========================================================
 
         print(
             "\n================ T-BILL TAB ================\n"
         )
-
-        # Try several ways of identifying the T-Bill tab.
 
         selectors = [
             "text=T-Bills Mkt. Watch",
@@ -230,38 +224,36 @@ async def main():
                     selector
                 ).first
 
-                count = await locator.count()
+                if await locator.count() == 0:
+                    continue
 
-                if count > 0:
+                print(
+                    f"Found selector: {selector}"
+                )
 
-                    print(
-                        f"Found selector: {selector}"
-                    )
+                try:
+                    await locator.scroll_into_view_if_needed()
+                except Exception:
+                    pass
 
-                    try:
+                await locator.click(
+                    force=True,
+                    timeout=10000
+                )
 
-                        await locator.scroll_into_view_if_needed()
+                clicked = True
 
-                    except Exception:
-                        pass
+                print(
+                    f"CLICKED: {selector}"
+                )
 
-                    await locator.click(
-                        force=True,
-                        timeout=10000
-                    )
-
-                    clicked = True
-
-                    print(
-                        f"CLICKED: {selector}"
-                    )
-
-                    break
+                break
 
             except Exception as e:
 
                 print(
-                    f"Selector failed: {selector}"
+                    f"Selector failed: "
+                    f"{selector}"
                 )
 
                 print(
@@ -272,34 +264,31 @@ async def main():
             f"\nT-BILL CLICKED: {clicked}"
         )
 
-        # ---------------------------------------------------------
-        # WAIT FOR AJAX / FETCH
-        # ---------------------------------------------------------
+        # =========================================================
+        # WAIT FOR T-BILL DATA
+        # =========================================================
 
         print(
-            "\nWaiting for T-Bill network activity...\n"
+            "\nWaiting for T-Bill data...\n"
         )
 
         await page.wait_for_timeout(
-            15000
+            12000
         )
 
-        # ---------------------------------------------------------
-        # INSPECT TABLES AFTER T-BILL CLICK
-        # ---------------------------------------------------------
+        # =========================================================
+        # EXTRACT ALL T-BILLS
+        # =========================================================
 
         print(
-            "\n================ TABLE INSPECTION ================\n"
+            "\n================ RAW T-BILLS ================\n"
         )
 
         tables = await page.locator(
             "table"
         ).all()
 
-        print(
-            f"TABLE COUNT AFTER T-BILL ACTION: "
-            f"{len(tables)}"
-        )
+        tbill_data = []
 
         for i, table in enumerate(tables):
 
@@ -307,12 +296,10 @@ async def main():
                 "tbody tr"
             ).all()
 
-            print(
-                f"\nTABLE {i} | ROWS: {len(rows)}"
-            )
+            if len(rows) <= 2:
+                continue
 
-            # Print first few rows only
-            for row in rows[:5]:
+            for row in rows:
 
                 cells = await row.locator(
                     "td"
@@ -323,121 +310,166 @@ async def main():
                     for c in cells
                 ]
 
-                print(
-                    cells
+                if len(cells) < 10:
+                    continue
+
+                security = cells[0]
+
+                if not security:
+                    continue
+
+                security_upper = (
+                    security.upper()
                 )
 
-        # ---------------------------------------------------------
-        # ATTEMPT TO IDENTIFY T-BILL TABLE BY HEADER
-        # ---------------------------------------------------------
+                if not (
+                    security_upper.startswith("091 DTB")
+                    or
+                    security_upper.startswith("182 DTB")
+                    or
+                    security_upper.startswith("364 DTB")
+                ):
+                    continue
 
-        print(
-            "\n================ T-BILL DATA SEARCH ================\n"
-        )
-
-        tbill_data = []
-
-        for i, table in enumerate(tables):
-
-            text = (
-                await table.inner_text()
-            ).lower()
-
-            if (
-                "security description" in text
-                and "maturity date" in text
-                and "lty" in text
-                and "ltp" in text
-            ):
-
-                print(
-                    f"Potential market table: TABLE {i}"
-                )
-
-                rows = await table.locator(
-                    "tbody tr"
-                ).all()
-
-                for row in rows:
-
-                    cells = await row.locator(
-                        "td"
-                    ).all_text_contents()
-
-                    cells = [
-                        c.strip()
-                        for c in cells
-                    ]
-
-                    if len(cells) < 10:
-                        continue
-
-                    security = cells[0]
-
-                    if not security:
-                        continue
-
-                    maturity = cells[1]
-
-                    # T-Bill table column order:
-                    #
-                    # 0 Security Description
-                    # 1 Maturity Date
-                    # 2 Bid Amt
-                    # 3 Bid Price
-                    # 4 Bid Yield
-                    # 5 Offer Yield
-                    # 6 Offer Price
-                    # 7 Offer Amt
-                    # 8 LTP
-                    # 9 LTY
-                    # 10 LTA
-                    # 11 TTA
-
-                    record = {
-                        "security_description": security,
-                        "maturity_date": maturity,
-                        "ltp": cells[8],
-                        "lty": cells[9],
-                        "lta": cells[10],
-                        "tta": cells[11]
+                record = {
+                    "security_description": security,
+                    "maturity_date": cells[1],
+                    "ltp": cells[8],
+                    "lty": cells[9],
+                    "lta": (
+                        cells[10]
+                        if len(cells) > 10
+                        else ""
+                    ),
+                    "tta": (
+                        cells[11]
                         if len(cells) > 11
                         else ""
-                    }
-
-                    tbill_data.append(
-                        record
                     )
+                }
 
-                    print(
-                        record
-                    )
+                tbill_data.append(
+                    record
+                )
 
         print(
-            f"\nTOTAL T-BILLS: "
+            f"TOTAL RAW T-BILLS: "
             f"{len(tbill_data)}"
         )
 
-        # ---------------------------------------------------------
+        # =========================================================
+        # SELECT REPRESENTATIVE SECURITIES
+        # =========================================================
+
+        print(
+            "\n================ SELECTED T-BILLS ================\n"
+        )
+
+        today = datetime.now(
+            IST
+        ).date()
+
+        print(
+            f"VALUATION DATE: "
+            f"{today.strftime('%d/%m/%Y')}"
+        )
+
+        selected = {}
+
+        for tenor, days in [
+            ("91D", 91),
+            ("182D", 182),
+            ("364D", 364)
+        ]:
+
+            result = select_representative_tbill(
+                tbill_data,
+                days
+            )
+
+            if result is None:
+
+                print(
+                    f"{tenor}: NOT FOUND"
+                )
+
+                continue
+
+            maturity = parse_date(
+                result["maturity_date"]
+            )
+
+            residual_days = (
+                maturity - today
+            ).days
+
+            selected[tenor] = result
+
+            print(
+                f"\n{tenor}"
+            )
+
+            print(
+                f"Security : "
+                f"{result['security_description']}"
+            )
+
+            print(
+                f"Maturity : "
+                f"{result['maturity_date']}"
+            )
+
+            print(
+                f"Residual : "
+                f"{residual_days} days"
+            )
+
+            print(
+                f"LTP      : "
+                f"{result['ltp']}"
+            )
+
+            print(
+                f"LTY      : "
+                f"{result['lty']}"
+            )
+
+            print(
+                f"LTA      : "
+                f"{result['lta']}"
+            )
+
+            print(
+                f"TTA      : "
+                f"{result['tta']}"
+            )
+
+        # =========================================================
         # FINAL SUMMARY
-        # ---------------------------------------------------------
+        # =========================================================
 
         print(
-            "\n================ SUMMARY ================\n"
+            "\n================ FINAL SUMMARY ================\n"
         )
 
         print(
-            f"TOTAL G-SECS: {len(gsec_data)}"
+            f"TOTAL G-SECS: "
+            f"{len(gsec_data)}"
         )
 
         print(
-            f"TOTAL T-BILLS: {len(tbill_data)}"
+            f"TOTAL RAW T-BILLS: "
+            f"{len(tbill_data)}"
         )
 
         print(
-            "\nIf T-Bills are still zero, the network "
-            "log above should reveal the CCIL endpoint "
-            "responsible for loading them."
+            f"SELECTED T-BILLS: "
+            f"{len(selected)}"
+        )
+
+        print(
+            "\nThe three selected securities "
+            "are ready for Neon integration."
         )
 
         await browser.close()
@@ -447,4 +479,4 @@ if __name__ == "__main__":
 
     asyncio.run(
         main()
-        )
+                )
