@@ -69,7 +69,7 @@ with sync_playwright() as p:
         "tta": values[11]
     }
 
-        securities.append(security)
+    securities.append(security)
 
     print("\n==============================")
     print("CLEAN NDS-OM DATA")
