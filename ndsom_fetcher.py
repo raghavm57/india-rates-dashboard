@@ -1,434 +1,450 @@
-print("STARTING NDS-OM G-SEC + T-BILL FETCH")
-
-from playwright.sync_api import sync_playwright
+import asyncio
 import json
+import re
+
+from playwright.async_api import async_playwright
+
 
 URL = "https://www.ccilindia.com/market-watch"
 
 
-def get_row_values(row):
+async def main():
 
-    cells = row.locator("td")
+    async with async_playwright() as p:
 
-    values = []
-
-    for j in range(cells.count()):
-
-        values.append(
-            cells.nth(j).inner_text().strip()
+        browser = await p.chromium.launch(
+            headless=True
         )
 
-    return values
+        page = await browser.new_page()
 
+        # ---------------------------------------------------------
+        # NETWORK DEBUGGING
+        # ---------------------------------------------------------
 
-with sync_playwright() as p:
+        print("\n================ NETWORK LOG ================\n")
 
-    browser = p.chromium.launch(
-        headless=True
-    )
+        async def log_request(request):
 
-    page = browser.new_page(
-        user_agent="Mozilla/5.0"
-    )
-
-    print("Opening CCIL...")
-
-    page.goto(
-        URL,
-        wait_until="domcontentloaded",
-        timeout=60000
-    )
-
-    print("Page loaded")
-
-    # Allow initial JavaScript/AJAX to run
-    page.wait_for_timeout(10000)
-
-
-    # =========================================================
-    # G-SEC DATA
-    # =========================================================
-
-    tables = page.locator("table")
-
-    print(
-        "INITIAL TABLE COUNT:",
-        tables.count()
-    )
-
-    gsecs = []
-
-
-    # Table 0 = Central Government Securities
-    gsec_table = tables.nth(0)
-
-    gsec_rows = gsec_table.locator("tr")
-
-    print(
-        "G-SEC ROWS:",
-        gsec_rows.count()
-    )
-
-
-    for i in range(
-        1,
-        gsec_rows.count()
-    ):
-
-        values = get_row_values(
-            gsec_rows.nth(i)
-        )
-
-        if len(values) < 12:
-            continue
-
-
-        gsec = {
-
-            "security_description": values[0],
-
-            "maturity_date": values[1],
-
-            "ltp": values[8],
-
-            "lty": values[9],
-
-            "lta": values[10],
-
-            "tta": values[11]
-        }
-
-
-        gsecs.append(gsec)
-
-
-    print(
-        "\n=============================="
-    )
-
-    print(
-        "CLEAN G-SEC DATA"
-    )
-
-    print(
-        "=============================="
-    )
-
-
-    for gsec in gsecs:
-
-        print(
-
-            gsec["security_description"],
-
-            "|",
-
-            gsec["maturity_date"],
-
-            "| LTP:",
-
-            gsec["ltp"],
-
-            "| LTY:",
-
-            gsec["lty"]
-        )
-
-
-    print(
-        "\nTOTAL G-SECS:",
-        len(gsecs)
-    )
-
-
-    # =========================================================
-    # FIND AND ACTIVATE T-BILLS TAB
-    # =========================================================
-
-    print(
-        "\n=============================="
-    )
-
-    print(
-        "SEARCHING FOR T-BILLS TAB"
-    )
-
-    print(
-        "=============================="
-    )
-
-
-    # Find visible T-Bills tab using JavaScript.
-    # This avoids Playwright's visibility restriction.
-
-    clicked = page.evaluate(
-        """
-        () => {
-
-            const elements = [
-                ...document.querySelectorAll(
-                    'a, button, [role="tab"], li'
-                )
-            ];
-
-            const target = elements.find(
-                el => {
-
-                    const text =
-                        (el.innerText || "")
-                        .trim()
-                        .toLowerCase();
-
-                    const visible =
-                        !!(
-                            el.offsetWidth ||
-                            el.offsetHeight ||
-                            el.getClientRects().length
-                        );
-
-                    return (
-                        text.includes("t-bills") &&
-                        visible
-                    );
-                }
-            );
-
-            if (!target) {
-
-                return false;
-            }
-
-            target.click();
-
-            return true;
-        }
-        """
-    )
-
-
-    print(
-        "T-BILLS TAB CLICKED:",
-        clicked
-    )
-
-
-    # Give CCIL AJAX time to populate
-    page.wait_for_timeout(10000)
-
-
-    print(
-        "CURRENT URL:",
-        page.url
-    )
-
-
-    # =========================================================
-    # READ TABLES AFTER T-BILL TAB
-    # =========================================================
-
-    tables = page.locator("table")
-
-    print(
-        "\nTABLE COUNT AFTER T-BILL ACTION:",
-        tables.count()
-    )
-
-
-    tbills = []
-
-
-    for i in range(
-        tables.count()
-    ):
-
-        table = tables.nth(i)
-
-        rows = table.locator("tr")
-
-
-        print(
-            "\n------------------------------"
-        )
-
-        print(
-            "TABLE:",
-            i,
-            "| ROWS:",
-            rows.count()
-        )
-
-        print(
-            "------------------------------"
-        )
-
-
-        # Print first few rows for diagnosis
-
-        for j in range(
-            min(
-                rows.count(),
-                5
-            )
-        ):
-
-            text = (
-
-                rows.nth(j)
-                .inner_text()
-                .strip()
-                .replace(
-                    "\n",
-                    " | "
-                )
-            )
-
-            if text:
+            if request.resource_type in [
+                "xhr",
+                "fetch"
+            ]:
 
                 print(
-                    "ROW:",
-                    text
+                    f"REQUEST | {request.method} | "
+                    f"{request.resource_type} | "
+                    f"{request.url}"
                 )
 
+        async def log_response(response):
 
-        # Look for actual DTB securities
+            request = response.request
 
-        for j in range(
-            1,
-            rows.count()
-        ):
+            if request.resource_type in [
+                "xhr",
+                "fetch"
+            ]:
 
-            values = get_row_values(
-                rows.nth(j)
-            )
+                print(
+                    f"RESPONSE | {response.status} | "
+                    f"{request.resource_type} | "
+                    f"{response.url}"
+                )
 
+                # Print response preview for likely data calls
+                url_lower = response.url.lower()
 
-            if len(values) < 12:
+                interesting = any(
+                    word in url_lower
+                    for word in [
+                        "market",
+                        "watch",
+                        "bill",
+                        "tbill",
+                        "security",
+                        "ndsom",
+                        "search",
+                        "trade"
+                    ]
+                )
 
-                continue
+                if interesting:
 
+                    try:
 
-            description = (
-                values[0]
-                .strip()
-                .upper()
-            )
+                        text = await response.text()
 
+                        preview = text[:1000]
 
-            if "DTB" not in description:
+                        print(
+                            "RESPONSE BODY PREVIEW:"
+                        )
 
-                continue
+                        print(preview)
 
+                        print(
+                            "\n----------------------------------------\n"
+                        )
 
-            tbill = {
+                    except Exception as e:
 
-                "security_description":
-                    values[0],
+                        print(
+                            f"Could not read response body: {e}"
+                        )
 
-                "maturity_date":
-                    values[1],
+        page.on(
+            "request",
+            log_request
+        )
 
-                "ltp":
-                    values[8],
+        page.on(
+            "response",
+            log_response
+        )
 
-                "lty":
-                    values[9],
+        # ---------------------------------------------------------
+        # OPEN CCIL
+        # ---------------------------------------------------------
 
-                "lta":
-                    values[10],
+        print("\nOpening CCIL Market Watch...\n")
 
-                "tta":
-                    values[11]
-            }
+        await page.goto(
+            URL,
+            wait_until="domcontentloaded",
+            timeout=60000
+        )
 
-
-            tbills.append(
-                tbill
-            )
-
-
-    # =========================================================
-    # T-BILL OUTPUT
-    # =========================================================
-
-    print(
-        "\n=============================="
-    )
-
-    print(
-        "CLEAN T-BILL DATA"
-    )
-
-    print(
-        "=============================="
-    )
-
-
-    for tbill in tbills:
+        await page.wait_for_timeout(8000)
 
         print(
-
-            tbill[
-                "security_description"
-            ],
-
-            "|",
-
-            tbill[
-                "maturity_date"
-            ],
-
-            "| LTP:",
-
-            tbill["ltp"],
-
-            "| LTY:",
-
-            tbill["lty"]
+            "PAGE LOADED:"
         )
 
-
-    print(
-        "\nTOTAL T-BILLS:",
-        len(tbills)
-    )
-
-
-    # =========================================================
-    # FINAL JSON
-    # =========================================================
-
-    output = {
-
-        "gsecs": gsecs,
-
-        "tbills": tbills
-    }
-
-
-    print(
-        "\n=============================="
-    )
-
-    print(
-        "FINAL JSON"
-    )
-
-    print(
-        "=============================="
-    )
-
-
-    print(
-        json.dumps(
-            output,
-            indent=2
+        print(
+            page.url
         )
-    )
+
+        # ---------------------------------------------------------
+        # G-SEC EXTRACTION
+        # ---------------------------------------------------------
+
+        print(
+            "\n================ G-SEC DATA ================\n"
+        )
+
+        tables = await page.locator(
+            "table"
+        ).all()
+
+        print(
+            f"TABLE COUNT: {len(tables)}"
+        )
+
+        gsec_data = []
+
+        if len(tables) > 0:
+
+            rows = await tables[0].locator(
+                "tbody tr"
+            ).all()
+
+            print(
+                f"G-SEC ROWS: {len(rows)}"
+            )
+
+            for row in rows:
+
+                cells = await row.locator(
+                    "td"
+                ).all_text_contents()
+
+                cells = [
+                    c.strip()
+                    for c in cells
+                ]
+
+                if len(cells) < 10:
+                    continue
+
+                security = cells[0]
+                maturity = cells[1]
+
+                ltp = cells[8]
+                lty = cells[9]
+                lta = cells[10] if len(cells) > 10 else ""
+                tta = cells[11] if len(cells) > 11 else ""
+
+                if not security:
+                    continue
+
+                record = {
+                    "security_description": security,
+                    "maturity_date": maturity,
+                    "ltp": ltp,
+                    "lty": lty,
+                    "lta": lta,
+                    "tta": tta
+                }
+
+                gsec_data.append(
+                    record
+                )
+
+                print(
+                    f"{security} | "
+                    f"{maturity} | "
+                    f"LTY: {lty} | "
+                    f"LTP: {ltp}"
+                )
+
+        print(
+            f"\nTOTAL G-SECS: {len(gsec_data)}"
+        )
+
+        # ---------------------------------------------------------
+        # FIND T-BILL TAB
+        # ---------------------------------------------------------
+
+        print(
+            "\n================ T-BILL TAB ================\n"
+        )
+
+        # Try several ways of identifying the T-Bill tab.
+
+        selectors = [
+            "text=T-Bills Mkt. Watch",
+            "text=T-Bills Mkt Watch",
+            "text=T-Bills",
+            "a:has-text('T-Bills')",
+            "button:has-text('T-Bills')"
+        ]
+
+        clicked = False
+
+        for selector in selectors:
+
+            try:
+
+                locator = page.locator(
+                    selector
+                ).first
+
+                count = await locator.count()
+
+                if count > 0:
+
+                    print(
+                        f"Found selector: {selector}"
+                    )
+
+                    try:
+
+                        await locator.scroll_into_view_if_needed()
+
+                    except Exception:
+                        pass
+
+                    await locator.click(
+                        force=True,
+                        timeout=10000
+                    )
+
+                    clicked = True
+
+                    print(
+                        f"CLICKED: {selector}"
+                    )
+
+                    break
+
+            except Exception as e:
+
+                print(
+                    f"Selector failed: {selector}"
+                )
+
+                print(
+                    str(e)[:300]
+                )
+
+        print(
+            f"\nT-BILL CLICKED: {clicked}"
+        )
+
+        # ---------------------------------------------------------
+        # WAIT FOR AJAX / FETCH
+        # ---------------------------------------------------------
+
+        print(
+            "\nWaiting for T-Bill network activity...\n"
+        )
+
+        await page.wait_for_timeout(
+            15000
+        )
+
+        # ---------------------------------------------------------
+        # INSPECT TABLES AFTER T-BILL CLICK
+        # ---------------------------------------------------------
+
+        print(
+            "\n================ TABLE INSPECTION ================\n"
+        )
+
+        tables = await page.locator(
+            "table"
+        ).all()
+
+        print(
+            f"TABLE COUNT AFTER T-BILL ACTION: "
+            f"{len(tables)}"
+        )
+
+        for i, table in enumerate(tables):
+
+            rows = await table.locator(
+                "tbody tr"
+            ).all()
+
+            print(
+                f"\nTABLE {i} | ROWS: {len(rows)}"
+            )
+
+            # Print first few rows only
+            for row in rows[:5]:
+
+                cells = await row.locator(
+                    "td"
+                ).all_text_contents()
+
+                cells = [
+                    c.strip()
+                    for c in cells
+                ]
+
+                print(
+                    cells
+                )
+
+        # ---------------------------------------------------------
+        # ATTEMPT TO IDENTIFY T-BILL TABLE BY HEADER
+        # ---------------------------------------------------------
+
+        print(
+            "\n================ T-BILL DATA SEARCH ================\n"
+        )
+
+        tbill_data = []
+
+        for i, table in enumerate(tables):
+
+            text = (
+                await table.inner_text()
+            ).lower()
+
+            if (
+                "security description" in text
+                and "maturity date" in text
+                and "lty" in text
+                and "ltp" in text
+            ):
+
+                print(
+                    f"Potential market table: TABLE {i}"
+                )
+
+                rows = await table.locator(
+                    "tbody tr"
+                ).all()
+
+                for row in rows:
+
+                    cells = await row.locator(
+                        "td"
+                    ).all_text_contents()
+
+                    cells = [
+                        c.strip()
+                        for c in cells
+                    ]
+
+                    if len(cells) < 10:
+                        continue
+
+                    security = cells[0]
+
+                    if not security:
+                        continue
+
+                    maturity = cells[1]
+
+                    # T-Bill table column order:
+                    #
+                    # 0 Security Description
+                    # 1 Maturity Date
+                    # 2 Bid Amt
+                    # 3 Bid Price
+                    # 4 Bid Yield
+                    # 5 Offer Yield
+                    # 6 Offer Price
+                    # 7 Offer Amt
+                    # 8 LTP
+                    # 9 LTY
+                    # 10 LTA
+                    # 11 TTA
+
+                    record = {
+                        "security_description": security,
+                        "maturity_date": maturity,
+                        "ltp": cells[8],
+                        "lty": cells[9],
+                        "lta": cells[10],
+                        "tta": cells[11]
+                        if len(cells) > 11
+                        else ""
+                    }
+
+                    tbill_data.append(
+                        record
+                    )
+
+                    print(
+                        record
+                    )
+
+        print(
+            f"\nTOTAL T-BILLS: "
+            f"{len(tbill_data)}"
+        )
+
+        # ---------------------------------------------------------
+        # FINAL SUMMARY
+        # ---------------------------------------------------------
+
+        print(
+            "\n================ SUMMARY ================\n"
+        )
+
+        print(
+            f"TOTAL G-SECS: {len(gsec_data)}"
+        )
+
+        print(
+            f"TOTAL T-BILLS: {len(tbill_data)}"
+        )
+
+        print(
+            "\nIf T-Bills are still zero, the network "
+            "log above should reveal the CCIL endpoint "
+            "responsible for loading them."
+        )
+
+        await browser.close()
 
 
-    browser.close()
+if __name__ == "__main__":
 
-
-print(
-    "\nNDS-OM FETCH FINISHED"
-)
+    asyncio.run(
+        main()
+        )
