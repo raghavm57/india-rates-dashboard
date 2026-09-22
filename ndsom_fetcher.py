@@ -60,14 +60,14 @@ with sync_playwright() as p:
         # 11 LTA
         # 12 TTA
 
-        security = {
-            "security_description": values[0],
-            "maturity_date": values[1],
-            "ltp": values[9],
-            "lty": values[10],
-            "lta": values[11],
-            "tta": values[12] if len(values) > 12 else None
-        }
+    security = {
+        "security_description": values[0],
+        "maturity_date": values[1],
+        "ltp": values[8],
+        "lty": values[9],
+        "lta": values[10],
+        "tta": values[11]
+    }
 
         securities.append(security)
 
