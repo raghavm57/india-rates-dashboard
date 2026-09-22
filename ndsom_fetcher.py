@@ -1,8 +1,10 @@
-print("STARTING NDS-OM NETWORK TEST")
+print("STARTING NDS-OM CLEAN FETCH")
 
 from playwright.sync_api import sync_playwright
+import json
 
 URL = "https://www.ccilindia.com/market-watch"
+
 
 with sync_playwright() as p:
 
@@ -12,16 +14,6 @@ with sync_playwright() as p:
         user_agent="Mozilla/5.0"
     )
 
-    # Capture network requests
-    def request_handler(request):
-        resource = request.resource_type
-
-        if resource in ["xhr", "fetch"]:
-            print("\nXHR/FETCH:")
-            print(request.method, request.url)
-
-    page.on("request", request_handler)
-
     print("Opening CCIL...")
 
     page.goto(
@@ -30,38 +22,80 @@ with sync_playwright() as p:
         timeout=60000
     )
 
-    print("Initial page loaded")
-
-    # Allow JavaScript/AJAX to populate market data
     page.wait_for_timeout(15000)
-
-    print("\n==============================")
-    print("CHECKING TABLES")
-    print("==============================")
 
     tables = page.locator("table")
 
     print("TABLE COUNT:", tables.count())
 
-    for i in range(tables.count()):
+    securities = []
 
-        table = tables.nth(i)
+    # Table 0 = Central Government Securities
+    table = tables.nth(0)
 
-        print("\n------------------------------")
-        print("TABLE:", i)
-        print("------------------------------")
+    rows = table.locator("tr")
 
-        rows = table.locator("tr")
+    print("G-SEC ROWS:", rows.count())
 
-        print("ROWS:", rows.count())
+    for i in range(1, rows.count()):
 
-        for j in range(min(rows.count(), 10)):
+        cells = rows.nth(i).locator("td")
 
-            text = rows.nth(j).inner_text().strip()
+        if cells.count() < 12:
+            continue
 
-            if text:
-                print("ROW:", text.replace("\n", " | "))
+        values = []
+
+        for j in range(cells.count()):
+            values.append(
+                cells.nth(j).inner_text().strip()
+            )
+
+        # Expected structure:
+        # 0 Security Description
+        # 1 Maturity Date
+        # ...
+        # 9 LTP
+        # 10 LTY
+        # 11 LTA
+        # 12 TTA
+
+        security = {
+            "security_description": values[0],
+            "maturity_date": values[1],
+            "ltp": values[9],
+            "lty": values[10],
+            "lta": values[11],
+            "tta": values[12] if len(values) > 12 else None
+        }
+
+        securities.append(security)
+
+    print("\n==============================")
+    print("CLEAN NDS-OM DATA")
+    print("==============================")
+
+    for security in securities:
+
+        print(
+            security["security_description"],
+            "|",
+            security["maturity_date"],
+            "| LTY:",
+            security["lty"]
+        )
+
+    print("\nTOTAL SECURITIES:", len(securities))
+
+    print("\nJSON OUTPUT:")
+
+    print(
+        json.dumps(
+            securities,
+            indent=2
+        )
+    )
 
     browser.close()
 
-print("\nNDS-OM NETWORK TEST FINISHED")
+print("\nNDS-OM CLEAN FETCH FINISHED")
