@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, date
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -20,7 +20,7 @@ if not DATABASE_URL:
 
 engine = create_engine(
     DATABASE_URL,
-    pool_pre_ping=True,
+    pool_pre_ping=True
 )
 
 
@@ -28,7 +28,6 @@ engine = create_engine(
 # DATABASE TABLE
 # ============================================================
 
-def ensure_table():
 def ensure_table():
 
     with engine.begin() as conn:
@@ -38,10 +37,10 @@ def ensure_table():
                 """
                 CREATE TABLE IF NOT EXISTS public.observations (
                     id BIGSERIAL PRIMARY KEY,
-                    observation_date DATE NOT NULL,
-                    source TEXT NOT NULL,
-                    series TEXT NOT NULL,
-                    tenor TEXT NOT NULL,
+                    observation_date DATE,
+                    source TEXT,
+                    series TEXT,
+                    tenor TEXT,
                     value DOUBLE PRECISION,
                     unit TEXT,
                     publication_time TIMESTAMP,
@@ -55,115 +54,34 @@ def ensure_table():
             )
         )
 
-        conn.execute(
-            text(
-                """
-                ALTER TABLE public.observations
-                ADD COLUMN IF NOT EXISTS observation_date DATE;
-                """
-            )
-        )
+        columns = [
+            ("observation_date", "DATE"),
+            ("source", "TEXT"),
+            ("series", "TEXT"),
+            ("tenor", "TEXT"),
+            ("value", "DOUBLE PRECISION"),
+            ("unit", "TEXT"),
+            ("publication_time", "TIMESTAMP"),
+            ("source_url", "TEXT"),
+            ("status", "TEXT"),
+            ("security_description", "TEXT"),
+            ("maturity_date", "DATE"),
+            ("ltp", "DOUBLE PRECISION"),
+        ]
 
-        conn.execute(
-            text(
-                """
-                ALTER TABLE public.observations
-                ADD COLUMN IF NOT EXISTS source TEXT;
-                """
-            )
-        )
+        for column, datatype in columns:
 
-        conn.execute(
-            text(
-                """
-                ALTER TABLE public.observations
-                ADD COLUMN IF NOT EXISTS series TEXT;
-                """
+            conn.execute(
+                text(
+                    f"""
+                    ALTER TABLE public.observations
+                    ADD COLUMN IF NOT EXISTS
+                    {column} {datatype};
+                    """
+                )
             )
-        )
 
-        conn.execute(
-            text(
-                """
-                ALTER TABLE public.observations
-                ADD COLUMN IF NOT EXISTS tenor TEXT;
-                """
-            )
-        )
-
-        conn.execute(
-            text(
-                """
-                ALTER TABLE public.observations
-                ADD COLUMN IF NOT EXISTS value DOUBLE PRECISION;
-                """
-            )
-        )
-
-        conn.execute(
-            text(
-                """
-                ALTER TABLE public.observations
-                ADD COLUMN IF NOT EXISTS unit TEXT;
-                """
-            )
-        )
-
-        conn.execute(
-            text(
-                """
-                ALTER TABLE public.observations
-                ADD COLUMN IF NOT EXISTS publication_time TIMESTAMP;
-                """
-            )
-        )
-
-        conn.execute(
-            text(
-                """
-                ALTER TABLE public.observations
-                ADD COLUMN IF NOT EXISTS source_url TEXT;
-                """
-            )
-        )
-
-        conn.execute(
-            text(
-                """
-                ALTER TABLE public.observations
-                ADD COLUMN IF NOT EXISTS status TEXT;
-                """
-            )
-        )
-
-        conn.execute(
-            text(
-                """
-                ALTER TABLE public.observations
-                ADD COLUMN IF NOT EXISTS security_description TEXT;
-                """
-            )
-        )
-
-        conn.execute(
-            text(
-                """
-                ALTER TABLE public.observations
-                ADD COLUMN IF NOT EXISTS maturity_date DATE;
-                """
-            )
-        )
-
-        conn.execute(
-            text(
-                """
-                ALTER TABLE public.observations
-                ADD COLUMN IF NOT EXISTS ltp DOUBLE PRECISION;
-                """
-            )
-        )
-
-        print("Database table check completed.")
+    print("Database table check completed.")
 
 
 # ============================================================
@@ -235,7 +153,7 @@ def save_observation(
                 "security_description": security_description,
                 "maturity_date": maturity_date,
                 "ltp": ltp,
-            },
+            }
         )
 
 
@@ -245,7 +163,7 @@ def save_observation(
 
 def save_money_market(reference_date):
 
-    print("\nFetching CCIL money-market data...")
+    print("\nFetching money-market data...")
 
     url = "https://www.ccilindia.com/web/ccil/money-market"
 
@@ -254,85 +172,74 @@ def save_money_market(reference_date):
         response = requests.get(
             url,
             timeout=30,
-            headers={
-                "User-Agent": "Mozilla/5.0"
-            },
+            headers={"User-Agent": "Mozilla/5.0"}
         )
 
         response.raise_for_status()
 
         tables = pd.read_html(response.text)
 
-        if not tables:
-
-            print("No money-market tables found.")
-            return
-
         saved = 0
 
         for table in tables:
 
-            table.columns = [
-                str(c).strip()
-                for c in table.columns
-            ]
-
             for _, row in table.iterrows():
 
                 row_text = " ".join(
-                    str(x)
-                    for x in row.tolist()
+                    str(x) for x in row.tolist()
                 ).lower()
 
-                mappings = {
+                mapping = {
                     "call": "Call",
                     "treps": "TREPS",
                     "basket repo": "Basket Repo",
                     "special repo": "Special Repo",
                 }
 
-                for search_name, tenor in mappings.items():
+                tenor = None
 
-                    if search_name not in row_text:
-                        continue
+                for key, value in mapping.items():
 
-                    numeric_values = []
+                    if key in row_text:
+                        tenor = value
+                        break
 
-                    for value in row.tolist():
+                if tenor is None:
+                    continue
 
-                        try:
+                numbers = []
 
-                            number = float(
-                                str(value)
-                                .replace(",", "")
-                                .replace("%", "")
-                                .strip()
-                            )
+                for value in row.tolist():
 
-                            numeric_values.append(number)
+                    try:
 
-                        except Exception:
-                            continue
+                        number = float(
+                            str(value)
+                            .replace(",", "")
+                            .replace("%", "")
+                            .strip()
+                        )
 
-                    if not numeric_values:
-                        continue
+                        numbers.append(number)
 
-                    value = numeric_values[-1]
+                    except Exception:
+                        pass
 
-                    save_observation(
-                        observation_date=reference_date,
-                        source="CCIL",
-                        series="MONEY_MARKET",
-                        tenor=tenor,
-                        value=value,
-                        unit="percent",
-                        source_url=url,
-                        status="success",
-                    )
+                if not numbers:
+                    continue
 
-                    saved += 1
+                save_observation(
+                    observation_date=reference_date,
+                    source="CCIL",
+                    series="MONEY_MARKET",
+                    tenor=tenor,
+                    value=numbers[-1],
+                    unit="percent",
+                    source_url=url,
+                    status="success",
+                )
 
-                    break
+                saved += 1
 
         print(
             f"Money-market observations saved: {saved}"
@@ -373,22 +280,16 @@ def save_tradingview(reference_date):
             payload = {
                 "symbols": {
                     "tickers": [symbol],
-                    "query": {
-                        "types": []
-                    },
+                    "query": {"types": []}
                 },
-                "columns": [
-                    "close"
-                ],
+                "columns": ["close"],
             }
 
             response = requests.post(
                 url,
                 json=payload,
                 timeout=30,
-                headers={
-                    "User-Agent": "Mozilla/5.0"
-                },
+                headers={"User-Agent": "Mozilla/5.0"}
             )
 
             response.raise_for_status()
@@ -407,13 +308,10 @@ def save_tradingview(reference_date):
 
             if symbol == "TVC:US10Y":
                 tenor = "US10Y"
-
             elif symbol == "TVC:JP10Y":
                 tenor = "JP10Y"
-
             elif symbol == "TVC:CN10Y":
                 tenor = "CN10Y"
-
             else:
                 continue
 
@@ -447,7 +345,7 @@ def save_tradingview(reference_date):
 
 def save_ois(reference_date):
 
-    print("\nFetching CCIL OIS data...")
+    print("\nFetching OIS data...")
 
     url = (
         "https://www.ccilindia.com/"
@@ -459,21 +357,15 @@ def save_ois(reference_date):
         response = requests.get(
             url,
             timeout=30,
-            headers={
-                "User-Agent": "Mozilla/5.0"
-            },
+            headers={"User-Agent": "Mozilla/5.0"}
         )
 
         if response.status_code != 200:
-
             print(
                 f"OIS HTTP status: {response.status_code}"
             )
-
             return
 
-        # CCIL may sometimes return HTML instead
-        # of the expected data response.
         if "<html" in response.text.lower():
 
             print(
@@ -490,21 +382,13 @@ def save_ois(reference_date):
 
         for table in tables:
 
-            table.columns = [
-                str(c).strip()
-                for c in table.columns
-            ]
-
             for _, row in table.iterrows():
 
-                row_values = row.tolist()
+                values = row.tolist()
 
-                text_row = " ".join(
-                    str(x)
-                    for x in row_values
-                )
-
-                text_lower = text_row.lower()
+                row_text = " ".join(
+                    str(x) for x in values
+                ).lower()
 
                 tenor = None
 
@@ -520,7 +404,7 @@ def save_ois(reference_date):
                     "10Y",
                 ]:
 
-                    if candidate.lower() in text_lower:
+                    if candidate.lower() in row_text:
 
                         tenor = candidate
                         break
@@ -528,9 +412,9 @@ def save_ois(reference_date):
                 if tenor is None:
                     continue
 
-                numeric_values = []
+                numbers = []
 
-                for value in row_values:
+                for value in values:
 
                     try:
 
@@ -541,15 +425,15 @@ def save_ois(reference_date):
                             .strip()
                         )
 
-                        numeric_values.append(number)
+                        numbers.append(number)
 
                     except Exception:
-                        continue
+                        pass
 
-                if not numeric_values:
+                if not numbers:
                     continue
 
-                value = numeric_values[-1]
+                value = numbers[-1]
 
                 if value <= 0:
                     continue
@@ -579,12 +463,12 @@ def save_ois(reference_date):
 
 
 # ============================================================
-# LEGACY CCIL G-SEC
+# LEGACY G-SEC
 # ============================================================
 
 def save_gsec(reference_date):
 
-    print("\nFetching legacy CCIL G-Sec data...")
+    print("\nFetching legacy G-Sec data...")
 
     url = (
         "https://www.ccilindia.com/"
@@ -596,9 +480,7 @@ def save_gsec(reference_date):
         response = requests.get(
             url,
             timeout=30,
-            headers={
-                "User-Agent": "Mozilla/5.0"
-            },
+            headers={"User-Agent": "Mozilla/5.0"}
         )
 
         response.raise_for_status()
@@ -613,30 +495,29 @@ def save_gsec(reference_date):
 
             for _, row in table.iterrows():
 
-                row_text = " ".join(
-                    str(x)
-                    for x in row.tolist()
-                )
+                values = row.tolist()
 
-                text_lower = row_text.lower()
+                row_text = " ".join(
+                    str(x) for x in values
+                ).lower()
 
                 tenor = None
 
-                if "1y-2y" in text_lower:
+                if "1y-2y" in row_text:
                     tenor = "2Y"
 
-                elif "4y-5y" in text_lower:
+                elif "4y-5y" in row_text:
                     tenor = "5Y"
 
-                elif "9y-10y" in text_lower:
+                elif "9y-10y" in row_text:
                     tenor = "10Y"
 
                 if tenor is None:
                     continue
 
-                numeric_values = []
+                numbers = []
 
-                for value in row.tolist():
+                for value in values:
 
                     try:
 
@@ -647,22 +528,20 @@ def save_gsec(reference_date):
                             .strip()
                         )
 
-                        numeric_values.append(number)
+                        numbers.append(number)
 
                     except Exception:
-                        continue
+                        pass
 
-                if not numeric_values:
+                if not numbers:
                     continue
-
-                value = numeric_values[-1]
 
                 save_observation(
                     observation_date=reference_date,
                     source="CCIL",
                     series="GSEC_LEGACY",
                     tenor=tenor,
-                    value=value,
+                    value=numbers[-1],
                     unit="percent",
                     source_url=url,
                     status="success",
@@ -728,22 +607,10 @@ def save_ndsom(reference_date):
     for row in gsecs:
 
         tenor = row.get("tenor")
-
-        security = row.get(
-            "security_description"
-        )
-
-        maturity = row.get(
-            "maturity_date"
-        )
-
-        lty = row.get(
-            "lty"
-        )
-
-        ltp = row.get(
-            "ltp"
-        )
+        security = row.get("security_description")
+        maturity = row.get("maturity_date")
+        lty = row.get("lty")
+        ltp = row.get("ltp")
 
         if tenor not in [
             "2Y",
@@ -760,9 +627,7 @@ def save_ndsom(reference_date):
 
         print(
             f"NDS-OM G-Sec {tenor}: "
-            f"{security} | "
-            f"{maturity} | "
-            f"LTY {lty}"
+            f"{security} | {maturity} | LTY {lty}"
         )
 
         save_observation(
@@ -774,8 +639,7 @@ def save_ndsom(reference_date):
             unit="percent",
             publication_time=None,
             source_url=(
-                "https://www.ccilindia.com/"
-                "market-watch"
+                "https://www.ccilindia.com/market-watch"
             ),
             status="success",
             security_description=security,
@@ -794,22 +658,10 @@ def save_ndsom(reference_date):
     for row in tbills:
 
         tenor = row.get("tenor")
-
-        security = row.get(
-            "security_description"
-        )
-
-        maturity = row.get(
-            "maturity_date"
-        )
-
-        lty = row.get(
-            "lty"
-        )
-
-        ltp = row.get(
-            "ltp"
-        )
+        security = row.get("security_description")
+        maturity = row.get("maturity_date")
+        lty = row.get("lty")
+        ltp = row.get("ltp")
 
         if tenor not in [
             "91D",
@@ -826,9 +678,7 @@ def save_ndsom(reference_date):
 
         print(
             f"NDS-OM T-Bill {tenor}: "
-            f"{security} | "
-            f"{maturity} | "
-            f"LTY {lty}"
+            f"{security} | {maturity} | LTY {lty}"
         )
 
         save_observation(
@@ -840,8 +690,7 @@ def save_ndsom(reference_date):
             unit="percent",
             publication_time=None,
             source_url=(
-                "https://www.ccilindia.com/"
-                "market-watch"
+                "https://www.ccilindia.com/market-watch"
             ),
             status="success",
             security_description=security,
@@ -878,20 +727,16 @@ if __name__ == "__main__":
         f"India date: {reference_date}"
     )
 
-    # Database
     ensure_table()
 
-    # Money market
     save_money_market(
         reference_date
     )
 
-    # TradingView global bonds
     save_tradingview(
         reference_date
     )
 
-    # OIS
     if reference_date.weekday() < 5:
 
         print(
@@ -908,12 +753,10 @@ if __name__ == "__main__":
             "Weekend – skipping OIS."
         )
 
-    # Legacy CCIL G-Sec data
     save_gsec(
         reference_date
     )
 
-    # NDS-OM live market watch
     save_ndsom(
         reference_date
     )
@@ -927,4 +770,4 @@ if __name__ == "__main__":
     )
     print(
         "========================================"
-        )
+    )
