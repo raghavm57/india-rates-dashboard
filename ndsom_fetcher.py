@@ -1,6 +1,6 @@
 import asyncio
-from datetime import datetime
-from itertools import combinations, permutations
+import re
+from datetime import datetime, date
 
 from playwright.async_api import async_playwright
 
@@ -12,478 +12,576 @@ CCIL_URL = "https://www.ccilindia.com/market-watch"
 # HELPERS
 # ============================================================
 
-def clean_number(value):
-
+def clean_text(value):
     if value is None:
-        return None
-
-    text = str(value).strip()
-    text = text.replace(",", "")
-
-    if text in ("", "-", "—", "NA", "N/A", "null", "None"):
-        return None
-
-    try:
-        return float(text)
-    except Exception:
-        return None
+        return ""
+    return re.sub(r"\s+", " ", str(value)).strip()
 
 
 def parse_date(value):
+    value = clean_text(value)
 
-    if value is None:
+    if not value:
         return None
-
-    text = str(value).strip()
 
     formats = [
         "%d/%m/%Y",
         "%d-%m-%Y",
+        "%Y-%m-%d",
         "%d/%m/%y",
-        "%d-%m-%y"
+        "%d-%m-%y",
+        "%d %b %Y",
+        "%d %B %Y",
     ]
 
     for fmt in formats:
-
         try:
-            return datetime.strptime(
-                text,
-                fmt
-            ).date()
-
+            return datetime.strptime(value, fmt).date()
         except Exception:
             pass
 
     return None
 
 
-def find_column(record, names):
+def parse_number(value):
+    value = clean_text(value)
 
-    normalized = {}
-
-    for key in record.keys():
-
-        clean_key = (
-            str(key)
-            .strip()
-            .lower()
-            .replace(" ", "")
-            .replace(".", "")
-            .replace("-", "")
-            .replace("_", "")
-            .replace("(", "")
-            .replace(")", "")
-        )
-
-        normalized[clean_key] = key
-
-    for name in names:
-
-        clean_name = (
-            name
-            .lower()
-            .replace(" ", "")
-            .replace(".", "")
-            .replace("-", "")
-            .replace("_", "")
-            .replace("(", "")
-            .replace(")", "")
-        )
-
-        if clean_name in normalized:
-
-            return normalized[clean_name]
-
-    return None
-
-
-def normalize_row(record):
-
-    security_col = find_column(
-        record,
-        [
-            "Security Description",
-            "SecurityDescription",
-            "Security"
-        ]
-    )
-
-    maturity_col = find_column(
-        record,
-        [
-            "Maturity Date",
-            "MaturityDate",
-            "Maturity"
-        ]
-    )
-
-    ltp_col = find_column(
-        record,
-        ["LTP"]
-    )
-
-    lty_col = find_column(
-        record,
-        ["LTY"]
-    )
-
-    security = (
-        record.get(security_col)
-        if security_col
-        else None
-    )
-
-    maturity = parse_date(
-        record.get(maturity_col)
-        if maturity_col
-        else None
-    )
-
-    ltp = clean_number(
-        record.get(ltp_col)
-        if ltp_col
-        else None
-    )
-
-    lty = clean_number(
-        record.get(lty_col)
-        if lty_col
-        else None
-    )
-
-    return {
-        "security_description": security,
-        "maturity_date": maturity,
-        "ltp": ltp,
-        "lty": lty
-    }
-
-
-def residual_days(
-    maturity,
-    today
-):
-
-    if maturity is None:
+    if not value:
         return None
 
-    return (
-        maturity - today
-    ).days
+    value = value.replace(",", "")
+    value = value.replace("%", "")
+
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+def normalize_header(value):
+    value = clean_text(value).lower()
+
+    value = value.replace(".", "")
+    value = value.replace("-", " ")
+    value = re.sub(r"\s+", " ", value)
+
+    return value
 
 
 # ============================================================
-# TABLE READER
+# READ A TABLE
 # ============================================================
 
-async def read_table(
-    page,
-    table_index
-):
-
-    tables = page.locator("table")
-
-    count = await tables.count()
-
-    if table_index >= count:
-        return []
-
-    table = tables.nth(
-        table_index
-    )
+async def read_table(table):
+    """
+    Convert a Playwright HTML table into a list of dictionaries.
+    Header names are used rather than fixed column positions.
+    """
 
     rows = table.locator("tr")
-
     row_count = await rows.count()
 
     if row_count == 0:
         return []
 
-    raw_rows = []
+    # --------------------------------------------------------
+    # Find header row
+    # --------------------------------------------------------
 
-    for i in range(row_count):
+    headers = None
+    header_row_index = None
 
-        cells = rows.nth(i).locator(
-            "th, td"
-        )
+    for i in range(min(row_count, 5)):
 
+        cells = rows.nth(i).locator("th, td")
         cell_count = await cells.count()
+
+        if cell_count == 0:
+            continue
 
         values = []
 
         for j in range(cell_count):
-
-            value = await cells.nth(j).inner_text()
-
             values.append(
-                value.strip()
+                clean_text(await cells.nth(j).inner_text())
             )
 
-        if values:
-            raw_rows.append(values)
+        normalized = [normalize_header(x) for x in values]
 
-    if len(raw_rows) < 2:
+        has_security = any(
+            "security" in x for x in normalized
+        )
+
+        has_maturity = any(
+            "maturity" in x for x in normalized
+        )
+
+        has_lty = any(
+            x == "lty" or "last traded yield" in x
+            for x in normalized
+        )
+
+        if has_security and has_maturity and has_lty:
+            headers = normalized
+            header_row_index = i
+            break
+
+    if headers is None:
         return []
 
-    headers = raw_rows[0]
+    # --------------------------------------------------------
+    # Read data rows
+    # --------------------------------------------------------
 
-    records = []
+    data = []
 
-    for values in raw_rows[1:]:
+    for i in range(header_row_index + 1, row_count):
 
-        if len(values) != len(headers):
+        cells = rows.nth(i).locator("td")
+        cell_count = await cells.count()
+
+        if cell_count == 0:
             continue
 
-        record = {}
+        values = []
 
-        for i, header in enumerate(headers):
+        for j in range(cell_count):
+            values.append(
+                clean_text(await cells.nth(i).locator("td").nth(j).inner_text())
+            )
 
-            record[
-                header
-            ] = values[i]
+        if not values:
+            continue
 
-        records.append(record)
+        row = {}
 
-    return records
+        for j, value in enumerate(values):
+
+            if j < len(headers):
+                row[headers[j]] = value
+
+        data.append(row)
+
+    return data
 
 
 # ============================================================
-# T-BILL SELECTION
+# FIND FIELD
 # ============================================================
 
-def select_tbills(
-    rows,
-    today
-):
+def get_field(row, possible_names):
 
-    targets = {
-        "91D": 91,
-        "182D": 182,
-        "364D": 364
+    for key, value in row.items():
+
+        key_normalized = normalize_header(key)
+
+        for name in possible_names:
+
+            if key_normalized == name:
+                return clean_text(value)
+
+    return ""
+
+
+# ============================================================
+# NORMALIZE ROW
+# ============================================================
+
+def normalize_row(row):
+
+    security = get_field(
+        row,
+        [
+            "security description",
+            "security",
+        ],
+    )
+
+    maturity_raw = get_field(
+        row,
+        [
+            "maturity date",
+            "maturity",
+        ],
+    )
+
+    lty_raw = get_field(
+        row,
+        [
+            "lty",
+            "last traded yield",
+        ],
+    )
+
+    ltp_raw = get_field(
+        row,
+        [
+            "ltp",
+            "last traded price",
+        ],
+    )
+
+    maturity = parse_date(maturity_raw)
+
+    lty = parse_number(lty_raw)
+    ltp = parse_number(ltp_raw)
+
+    return {
+        "security_description": security,
+        "maturity_date": maturity,
+        "lty": lty,
+        "ltp": ltp,
     }
 
-    selected = {}
+
+# ============================================================
+# FIND G-SEC TABLE
+# ============================================================
+
+async def find_gsec_table(page):
+
+    tables = page.locator("table")
+    count = await tables.count()
+
+    candidates = []
+
+    for i in range(count):
+
+        try:
+            table = tables.nth(i)
+
+            if not await table.is_visible():
+                continue
+
+            rows = await read_table(table)
+
+            normalized_rows = [
+                normalize_row(x)
+                for x in rows
+            ]
+
+            valid = []
+
+            for row in normalized_rows:
+
+                security = row["security_description"]
+
+                if not security:
+                    continue
+
+                if row["maturity_date"] is None:
+                    continue
+
+                if row["lty"] is None or row["lty"] <= 0:
+                    continue
+
+                # G-Secs generally contain GS / FRB etc.
+                # Explicitly exclude DTB rows.
+                if re.search(
+                    r"\bDTB\b",
+                    security,
+                    re.IGNORECASE,
+                ):
+                    continue
+
+                valid.append(row)
+
+            if len(valid) >= 3:
+                candidates.append(
+                    (i, valid)
+                )
+
+        except Exception:
+            continue
+
+    if not candidates:
+        return []
+
+    # Pick the table with the most valid G-Sec rows
+    candidates.sort(
+        key=lambda x: len(x[1]),
+        reverse=True,
+    )
+
+    return candidates[0][1]
+
+
+# ============================================================
+# FIND T-BILL TABLE
+# ============================================================
+
+async def find_tbill_table(page):
+
+    tables = page.locator("table")
+    count = await tables.count()
+
+    candidates = []
+
+    for i in range(count):
+
+        try:
+            table = tables.nth(i)
+
+            rows = await read_table(table)
+
+            normalized_rows = [
+                normalize_row(x)
+                for x in rows
+            ]
+
+            valid = []
+
+            for row in normalized_rows:
+
+                security = row["security_description"]
+
+                if not security:
+                    continue
+
+                if row["maturity_date"] is None:
+                    continue
+
+                if row["lty"] is None or row["lty"] <= 0:
+                    continue
+
+                # ====================================================
+                # CRITICAL:
+                #
+                # T-Bills have DTB in the security description.
+                #
+                # Examples:
+                # 091 DTB 27112026
+                # 182 DTB 18032027
+                # 364 DTB 16092027
+                #
+                # This prevents G-Secs from being mistaken as T-Bills.
+                # ====================================================
+
+                if not re.search(
+                    r"\bDTB\b",
+                    security,
+                    re.IGNORECASE,
+                ):
+                    continue
+
+                valid.append(row)
+
+            # We need a genuine T-Bill table
+            if len(valid) >= 2:
+
+                candidates.append(
+                    (i, valid)
+                )
+
+        except Exception:
+            continue
+
+    if not candidates:
+        return []
+
+    # Pick table having the largest number of DTB rows
+    candidates.sort(
+        key=lambda x: len(x[1]),
+        reverse=True,
+    )
+
+    selected = candidates[0][1]
+
+    return selected
+
+
+# ============================================================
+# SELECT G-SECS
+# ============================================================
+
+def select_gsecs(rows):
+
+    today = date.today()
+
+    valid = []
+
+    for row in rows:
+
+        maturity = row["maturity_date"]
+        security = row["security_description"]
+        lty = row["lty"]
+
+        if not maturity:
+            continue
+
+        if not security:
+            continue
+
+        if lty is None or lty <= 0:
+            continue
+
+        # Do not allow T-Bills into G-Sec selection
+        if re.search(
+            r"\bDTB\b",
+            security,
+            re.IGNORECASE,
+        ):
+            continue
+
+        residual_days = (
+            maturity - today
+        ).days
+
+        if residual_days <= 0:
+            continue
+
+        row["residual_days"] = residual_days
+
+        valid.append(row)
+
+    print(
+        f"VALID G-SECS: {len(valid)}"
+    )
+
+    if not valid:
+        return []
+
+    targets = {
+        "2Y": 365 * 2,
+        "5Y": 365 * 5,
+        "10Y": 365 * 10,
+    }
+
+    selected = []
 
     used = set()
 
-    for tenor, target in targets.items():
+    for tenor, target_days in targets.items():
 
-        candidates = []
-
-        for row in rows:
-
-            security = row[
-                "security_description"
-            ]
-
-            maturity = row[
-                "maturity_date"
-            ]
-
-            lty = row["lty"]
-
-            if not security:
-                continue
-
-            if security in used:
-                continue
-
-            if maturity is None:
-                continue
-
-            # Reject zero / blank LTY
-            if lty is None or lty <= 0:
-                continue
-
-            days = residual_days(
-                maturity,
-                today
-            )
-
-            if days is None or days <= 0:
-                continue
-
-            distance = abs(
-                days - target
-            )
-
-            candidates.append(
-                (
-                    distance,
-                    row
-                )
-            )
+        candidates = [
+            row
+            for row in valid
+            if row["security_description"]
+            not in used
+        ]
 
         if not candidates:
-
-            selected[tenor] = None
             continue
 
-        candidates.sort(
-            key=lambda x: x[0]
+        best = min(
+            candidates,
+            key=lambda row: abs(
+                row["residual_days"]
+                - target_days
+            ),
         )
 
-        chosen = candidates[0][1]
+        best["tenor"] = tenor
 
-        selected[tenor] = chosen
+        selected.append(best)
 
         used.add(
-            chosen[
-                "security_description"
-            ]
+            best["security_description"]
         )
 
     return selected
 
 
 # ============================================================
-# G-SEC SELECTION
+# SELECT T-BILLS
 # ============================================================
 
-def select_gsecs(
-    rows,
-    today
-):
+def select_tbills(rows):
 
-    targets = {
-        "2Y": 365 * 2,
-        "5Y": 365 * 5,
-        "10Y": 365 * 10
-    }
-
-    candidates = []
+    valid = []
 
     for row in rows:
 
-        security = row[
-            "security_description"
-        ]
-
-        maturity = row[
-            "maturity_date"
-        ]
-
+        security = row["security_description"]
+        maturity = row["maturity_date"]
         lty = row["lty"]
 
         if not security:
             continue
 
-        if maturity is None:
+        if not maturity:
             continue
 
-        # Reject zero / blank LTY
         if lty is None or lty <= 0:
             continue
 
-        days = residual_days(
-            maturity,
-            today
+        # ----------------------------------------------------
+        # Identify T-Bill bucket from SECURITY DESCRIPTION
+        # ----------------------------------------------------
+
+        match = re.search(
+            r"^\s*(0?91|182|364)\s+DTB\b",
+            security,
+            re.IGNORECASE,
         )
 
-        if days is None or days <= 0:
+        if not match:
             continue
 
-        candidates.append({
-            "security": security,
-            "days": days,
-            "row": row
-        })
+        bucket = match.group(1)
 
-    if len(candidates) < 3:
+        if bucket in ("091", "91"):
+            tenor = "91D"
 
-        return {
-            "2Y": None,
-            "5Y": None,
-            "10Y": None
-        }
+        elif bucket == "182":
+            tenor = "182D"
 
-    best_score = None
-    best_assignment = None
+        elif bucket == "364":
+            tenor = "364D"
 
-    indices = range(
-        len(candidates)
+        else:
+            continue
+
+        row["tenor"] = tenor
+
+        valid.append(row)
+
+    print(
+        f"VALID T-BILLS: {len(valid)}"
     )
 
-    # Find three DIFFERENT securities
-    # that collectively best match
-    # 2Y / 5Y / 10Y.
+    # --------------------------------------------------------
+    # Select one security for each bucket
+    # --------------------------------------------------------
 
-    for combination_set in combinations(
-        indices,
-        3
-    ):
+    selected = []
 
-        for permutation_set in permutations(
-            combination_set
-        ):
+    for tenor in [
+        "91D",
+        "182D",
+        "364D",
+    ]:
 
-            score = 0
+        candidates = [
+            row
+            for row in valid
+            if row["tenor"] == tenor
+        ]
 
-            for (
-                tenor,
-                index
-            ) in zip(
-                targets.keys(),
-                permutation_set
-            ):
+        if not candidates:
+            print(
+                f"No T-Bill found for {tenor}"
+            )
+            continue
 
-                target_days = targets[
-                    tenor
-                ]
+        # Prefer the earliest maturity within
+        # the relevant T-Bill bucket.
+        candidates.sort(
+            key=lambda x: x["maturity_date"]
+        )
 
-                actual_days = candidates[
-                    index
-                ]["days"]
+        selected.append(
+            candidates[0]
+        )
 
-                score += abs(
-                    actual_days -
-                    target_days
-                )
-
-            if (
-                best_score is None
-                or score < best_score
-            ):
-
-                best_score = score
-
-                best_assignment = (
-                    permutation_set
-                )
-
-    result = {}
-
-    for (
-        tenor,
-        index
-    ) in zip(
-        targets.keys(),
-        best_assignment
-    ):
-
-        result[tenor] = candidates[
-            index
-        ]["row"]
-
-    return result
+    return selected
 
 
 # ============================================================
-# MAIN FETCHER
+# MAIN PLAYWRIGHT FETCHER
 # ============================================================
 
 async def _fetch_ndsom_data():
-
-    print("")
-    print(
-        "========================================"
-    )
-    print(
-        "NDS-OM MARKET WATCH"
-    )
-    print(
-        "========================================"
-    )
 
     async with async_playwright() as p:
 
@@ -493,103 +591,79 @@ async def _fetch_ndsom_data():
 
         page = await browser.new_page(
             viewport={
-                "width": 1600,
-                "height": 1200
+                "width": 1920,
+                "height": 1080,
             }
         )
 
         try:
 
-            # ------------------------------------------------
-            # OPEN CCIL
-            # ------------------------------------------------
+            print(
+                "Opening CCIL Market Watch..."
+            )
 
             await page.goto(
                 CCIL_URL,
                 wait_until="domcontentloaded",
-                timeout=60000
+                timeout=60000,
             )
 
             await page.wait_for_timeout(
                 5000
             )
 
-            today = datetime.now().date()
+            # ====================================================
+            # G-SEC
+            # ====================================================
 
-            # ------------------------------------------------
-            # G-SEC DATA
-            # ------------------------------------------------
-
-            print("")
             print(
-                "================ G-SEC DATA ================"
+                "Reading G-Sec Market Watch..."
             )
 
-            gsec_raw = await read_table(
-                page,
-                0
+            gsec_raw = await find_gsec_table(
+                page
             )
 
             print(
-                "TOTAL RAW G-SECS:",
-                len(gsec_raw)
+                f"RAW G-SECS FOUND: {len(gsec_raw)}"
             )
 
-            gsec_rows = []
+            gsecs = select_gsecs(
+                gsec_raw
+            )
 
-            for record in gsec_raw:
+            for row in gsecs:
 
-                row = normalize_row(
-                    record
+                print(
+                    "G-SEC:",
+                    row["tenor"],
+                    "|",
+                    row["security_description"],
+                    "|",
+                    row["maturity_date"],
+                    "|",
+                    row["residual_days"],
+                    "days | LTY",
+                    row["lty"],
+                    "| LTP",
+                    row["ltp"],
                 )
 
-                if (
-                    row[
-                        "security_description"
-                    ]
-                    and row[
-                        "maturity_date"
-                    ]
-                ):
-
-                    gsec_rows.append(
-                        row
-                    )
-
-                    print(
-                        row[
-                            "security_description"
-                        ],
-                        "|",
-                        row[
-                            "maturity_date"
-                        ],
-                        "| LTY:",
-                        row["lty"],
-                        "| LTP:",
-                        row["ltp"]
-                    )
+            # ====================================================
+            # CLICK T-BILLS TAB
+            # ====================================================
 
             print(
-                "VALID G-SECS:",
-                len(gsec_rows)
+                "Looking for T-Bills tab..."
             )
 
-            # ------------------------------------------------
-            # T-BILL TAB
-            # ------------------------------------------------
-
-            print("")
-            print(
-                "================ T-BILL DATA ================"
-            )
-
-            clicked = False
+            tbill_clicked = False
 
             selectors = [
                 "text=T-Bills Mkt. Watch",
                 "text=T-Bills",
-                "text=T Bills"
+                "text=T Bill",
+                "text=TBills",
             ]
 
             for selector in selectors:
@@ -602,298 +676,90 @@ async def _fetch_ndsom_data():
 
                     if await locator.count() > 0:
 
-                        print(
-                            "Found T-Bill selector:",
-                            selector
-                        )
-
                         await locator.click(
-                            timeout=10000
+                            timeout=5000
                         )
 
-                        clicked = True
+                        tbill_clicked = True
 
                         print(
                             "T-Bill tab clicked:",
-                            True
+                            selector,
                         )
 
                         break
 
                 except Exception:
-                    pass
+                    continue
+
+            if not tbill_clicked:
+
+                print(
+                    "WARNING: T-Bill tab could not be clicked"
+                )
 
             await page.wait_for_timeout(
-                2500
+                3000
             )
 
-            # ------------------------------------------------
-            # FIND T-BILL TABLE
-            # ------------------------------------------------
-
-            tbill_raw = []
-
-            table_count = await page.locator(
-                "table"
-            ).count()
-
-            for i in range(
-                table_count
-            ):
-
-                rows = await read_table(
-                    page,
-                    i
-                )
-
-                if not rows:
-                    continue
-
-                first_record = rows[0]
-
-                columns = " ".join(
-                    str(x).lower()
-                    for x in first_record.keys()
-                )
-
-                if (
-                    "security" in columns
-                    and "lty" in columns
-                ):
-
-                    tbill_raw = rows
-
-                    print(
-                        "T-Bill table found:",
-                        i
-                    )
-
-                    break
+            # ====================================================
+            # T-BILL TABLE
+            # ====================================================
 
             print(
-                "TOTAL RAW T-BILLS:",
-                len(tbill_raw)
+                "Searching specifically for DTB rows..."
             )
 
-            tbill_rows = []
-
-            for record in tbill_raw:
-
-                row = normalize_row(
-                    record
-                )
-
-                if (
-                    row[
-                        "security_description"
-                    ]
-                    and row[
-                        "maturity_date"
-                    ]
-                ):
-
-                    tbill_rows.append(
-                        row
-                    )
+            tbill_raw = await find_tbill_table(
+                page
+            )
 
             print(
-                "VALID T-BILLS:",
-                len(tbill_rows)
+                f"RAW T-BILLS FOUND: {len(tbill_raw)}"
             )
 
-            # ------------------------------------------------
-            # SELECT T-BILLS
-            # ------------------------------------------------
-
-            selected_tbills = select_tbills(
-                tbill_rows,
-                today
+            tbills = select_tbills(
+                tbill_raw
             )
 
-            print("")
-            print(
-                "================ SELECTED T-BILLS ================"
-            )
-
-            for tenor in (
-                "91D",
-                "182D",
-                "364D"
-            ):
-
-                row = selected_tbills.get(
-                    tenor
-                )
-
-                print("")
-
-                if row is None:
-
-                    print(
-                        "NDS-OM T-BILL",
-                        tenor,
-                        ": NO VALID SECURITY"
-                    )
-
-                    continue
-
-                days = residual_days(
-                    row[
-                        "maturity_date"
-                    ],
-                    today
-                )
+            for row in tbills:
 
                 print(
-                    "NDS-OM T-BILL",
-                    tenor,
-                    ":",
-                    row[
-                        "security_description"
-                    ],
+                    "T-BILL:",
+                    row["tenor"],
                     "|",
-                    row[
-                        "maturity_date"
-                    ].strftime(
-                        "%d/%m/%Y"
-                    ),
-                    "| Residual:",
-                    days,
-                    "days",
+                    row["security_description"],
+                    "|",
+                    row["maturity_date"],
                     "| LTY",
                     row["lty"],
                     "| LTP",
-                    row["ltp"]
+                    row["ltp"],
                 )
 
-            # ------------------------------------------------
-            # SELECT G-SECS
-            # ------------------------------------------------
-
-            selected_gsecs = select_gsecs(
-                gsec_rows,
-                today
-            )
-
-            print("")
             print(
-                "================ SELECTED G-SECS ================"
+                "================================================"
             )
 
-            for tenor in (
-                "2Y",
-                "5Y",
-                "10Y"
-            ):
+            print(
+                "FINAL NDS-OM RESULT"
+            )
 
-                row = selected_gsecs.get(
-                    tenor
-                )
+            print(
+                f"G-Secs: {len(gsecs)}"
+            )
 
-                print("")
+            print(
+                f"T-Bills: {len(tbills)}"
+            )
 
-                if row is None:
-
-                    print(
-                        "NDS-OM GSEC",
-                        tenor,
-                        ": NO VALID SECURITY"
-                    )
-
-                    continue
-
-                days = residual_days(
-                    row[
-                        "maturity_date"
-                    ],
-                    today
-                )
-
-                print(
-                    "NDS-OM GSEC",
-                    tenor,
-                    ":",
-                    row[
-                        "security_description"
-                    ],
-                    "|",
-                    row[
-                        "maturity_date"
-                    ].strftime(
-                        "%d/%m/%Y"
-                    ),
-                    "| Residual:",
-                    days,
-                    "days",
-                    "| LTY",
-                    row["lty"],
-                    "| LTP",
-                    row["ltp"]
-                )
-
-            print("")
-
-            # ------------------------------------------------
-            # RETURN DATA TO COLLECTOR
-            # ------------------------------------------------
+            print(
+                "================================================"
+            )
 
             return {
-
-                "gsecs": [
-
-                    {
-                        "tenor":
-                            tenor,
-
-                        "security_description":
-                            row[
-                                "security_description"
-                            ],
-
-                        "maturity_date":
-                            row[
-                                "maturity_date"
-                            ],
-
-                        "ltp":
-                            row["ltp"],
-
-                        "lty":
-                            row["lty"]
-                    }
-
-                    for tenor, row
-                    in selected_gsecs.items()
-                    if row is not None
-                ],
-
-                "tbills": [
-
-                    {
-                        "tenor":
-                            tenor,
-
-                        "security_description":
-                            row[
-                                "security_description"
-                            ],
-
-                        "maturity_date":
-                            row[
-                                "maturity_date"
-                            ],
-
-                        "ltp":
-                            row["ltp"],
-
-                        "lty":
-                            row["lty"]
-                    }
-
-                    for tenor, row
-                    in selected_tbills.items()
-                    if row is not None
-                ]
+                "gsecs": gsecs,
+                "tbills": tbills,
             }
 
         finally:
@@ -913,24 +779,19 @@ def fetch_ndsom_data():
 
 
 # ============================================================
-# DIRECT TEST
+# LOCAL TEST
 # ============================================================
 
 if __name__ == "__main__":
 
     data = fetch_ndsom_data()
 
-    print("")
-    print(
-        "NDS-OM FETCH COMPLETE"
-    )
+    print("\nG-SECS:")
 
-    print(
-        "G-SECS RETURNED:",
-        len(data["gsecs"])
-    )
+    for row in data["gsecs"]:
+        print(row)
 
-    print(
-        "T-BILLS RETURNED:",
-        len(data["tbills"])
-    )
+    print("\nT-BILLS:")
+
+    for row in data["tbills"]:
+        print(row)
