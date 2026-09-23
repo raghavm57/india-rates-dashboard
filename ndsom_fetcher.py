@@ -49,8 +49,7 @@ def parse_number(value):
     if not value:
         return None
 
-    value = value.replace(",", "")
-    value = value.replace("%", "")
+    value = value.replace(",", "").replace("%", "")
 
     try:
         return float(value)
@@ -60,23 +59,17 @@ def parse_number(value):
 
 def normalize_header(value):
     value = clean_text(value).lower()
-
     value = value.replace(".", "")
     value = value.replace("-", " ")
     value = re.sub(r"\s+", " ", value)
-
     return value
 
 
 # ============================================================
-# READ A TABLE
+# READ TABLE
 # ============================================================
 
 async def read_table(table):
-    """
-    Convert a Playwright HTML table into a list of dictionaries.
-    Header names are used rather than fixed column positions.
-    """
 
     rows = table.locator("tr")
     row_count = await rows.count()
@@ -84,13 +77,10 @@ async def read_table(table):
     if row_count == 0:
         return []
 
-    # --------------------------------------------------------
-    # Find header row
-    # --------------------------------------------------------
-
     headers = None
     header_row_index = None
 
+    # Find header row
     for i in range(min(row_count, 5)):
 
         cells = rows.nth(i).locator("th, td")
@@ -103,25 +93,23 @@ async def read_table(table):
 
         for j in range(cell_count):
             values.append(
-                clean_text(await cells.nth(j).inner_text())
+                clean_text(
+                    await cells.nth(j).inner_text()
+                )
             )
 
-        normalized = [normalize_header(x) for x in values]
+        normalized = [
+            normalize_header(x)
+            for x in values
+        ]
 
-        has_security = any(
-            "security" in x for x in normalized
-        )
-
-        has_maturity = any(
-            "maturity" in x for x in normalized
-        )
-
-        has_lty = any(
-            x == "lty" or "last traded yield" in x
-            for x in normalized
-        )
-
-        if has_security and has_maturity and has_lty:
+        # CCIL table header normally contains
+        # Security Description + Maturity Date
+        if (
+            any("security" in x for x in normalized)
+            and
+            any("maturity" in x for x in normalized)
+        ):
             headers = normalized
             header_row_index = i
             break
@@ -129,10 +117,7 @@ async def read_table(table):
     if headers is None:
         return []
 
-    # --------------------------------------------------------
     # Read data rows
-    # --------------------------------------------------------
-
     data = []
 
     for i in range(header_row_index + 1, row_count):
@@ -146,9 +131,14 @@ async def read_table(table):
         values = []
 
         for j in range(cell_count):
-            values.append(
-                clean_text(await cells.nth(i).locator("td").nth(j).inner_text())
+
+            # IMPORTANT:
+            # use j here, not i
+            value = clean_text(
+                await cells.nth(j).inner_text()
             )
+
+            values.append(value)
 
         if not values:
             continue
@@ -166,16 +156,16 @@ async def read_table(table):
 
 
 # ============================================================
-# FIND FIELD
+# GET FIELD
 # ============================================================
 
-def get_field(row, possible_names):
+def get_field(row, names):
 
     for key, value in row.items():
 
         key_normalized = normalize_header(key)
 
-        for name in possible_names:
+        for name in names:
 
             if key_normalized == name:
                 return clean_text(value)
@@ -221,16 +211,11 @@ def normalize_row(row):
         ],
     )
 
-    maturity = parse_date(maturity_raw)
-
-    lty = parse_number(lty_raw)
-    ltp = parse_number(ltp_raw)
-
     return {
         "security_description": security,
-        "maturity_date": maturity,
-        "lty": lty,
-        "ltp": ltp,
+        "maturity_date": parse_date(maturity_raw),
+        "lty": parse_number(lty_raw),
+        "ltp": parse_number(ltp_raw),
     }
 
 
@@ -248,21 +233,19 @@ async def find_gsec_table(page):
     for i in range(count):
 
         try:
-            table = tables.nth(i)
 
-            if not await table.is_visible():
-                continue
+            table = tables.nth(i)
 
             rows = await read_table(table)
 
-            normalized_rows = [
+            normalized = [
                 normalize_row(x)
                 for x in rows
             ]
 
             valid = []
 
-            for row in normalized_rows:
+            for row in normalized:
 
                 security = row["security_description"]
 
@@ -272,11 +255,13 @@ async def find_gsec_table(page):
                 if row["maturity_date"] is None:
                     continue
 
-                if row["lty"] is None or row["lty"] <= 0:
+                if row["lty"] is None:
                     continue
 
-                # G-Secs generally contain GS / FRB etc.
-                # Explicitly exclude DTB rows.
+                if row["lty"] <= 0:
+                    continue
+
+                # Do not treat T-Bills as G-Secs
                 if re.search(
                     r"\bDTB\b",
                     security,
@@ -287,9 +272,7 @@ async def find_gsec_table(page):
                 valid.append(row)
 
             if len(valid) >= 3:
-                candidates.append(
-                    (i, valid)
-                )
+                candidates.append(valid)
 
         except Exception:
             continue
@@ -297,13 +280,12 @@ async def find_gsec_table(page):
     if not candidates:
         return []
 
-    # Pick the table with the most valid G-Sec rows
     candidates.sort(
-        key=lambda x: len(x[1]),
+        key=len,
         reverse=True,
     )
 
-    return candidates[0][1]
+    return candidates[0]
 
 
 # ============================================================
@@ -320,18 +302,19 @@ async def find_tbill_table(page):
     for i in range(count):
 
         try:
+
             table = tables.nth(i)
 
             rows = await read_table(table)
 
-            normalized_rows = [
+            normalized = [
                 normalize_row(x)
                 for x in rows
             ]
 
             valid = []
 
-            for row in normalized_rows:
+            for row in normalized:
 
                 security = row["security_description"]
 
@@ -341,21 +324,17 @@ async def find_tbill_table(page):
                 if row["maturity_date"] is None:
                     continue
 
-                if row["lty"] is None or row["lty"] <= 0:
+                if row["lty"] is None:
                     continue
 
-                # ====================================================
-                # CRITICAL:
+                if row["lty"] <= 0:
+                    continue
+
+                # ==================================================
+                # CRITICAL T-BILL FILTER
                 #
-                # T-Bills have DTB in the security description.
-                #
-                # Examples:
-                # 091 DTB 27112026
-                # 182 DTB 18032027
-                # 364 DTB 16092027
-                #
-                # This prevents G-Secs from being mistaken as T-Bills.
-                # ====================================================
+                # Only accept securities containing DTB.
+                # ==================================================
 
                 if not re.search(
                     r"\bDTB\b",
@@ -366,12 +345,8 @@ async def find_tbill_table(page):
 
                 valid.append(row)
 
-            # We need a genuine T-Bill table
             if len(valid) >= 2:
-
-                candidates.append(
-                    (i, valid)
-                )
+                candidates.append(valid)
 
         except Exception:
             continue
@@ -379,15 +354,12 @@ async def find_tbill_table(page):
     if not candidates:
         return []
 
-    # Pick table having the largest number of DTB rows
     candidates.sort(
-        key=lambda x: len(x[1]),
+        key=len,
         reverse=True,
     )
 
-    selected = candidates[0][1]
-
-    return selected
+    return candidates[0]
 
 
 # ============================================================
@@ -402,20 +374,16 @@ def select_gsecs(rows):
 
     for row in rows:
 
-        maturity = row["maturity_date"]
         security = row["security_description"]
+        maturity = row["maturity_date"]
         lty = row["lty"]
 
-        if not maturity:
-            continue
-
-        if not security:
+        if not security or not maturity:
             continue
 
         if lty is None or lty <= 0:
             continue
 
-        # Do not allow T-Bills into G-Sec selection
         if re.search(
             r"\bDTB\b",
             security,
@@ -438,9 +406,6 @@ def select_gsecs(rows):
         f"VALID G-SECS: {len(valid)}"
     )
 
-    if not valid:
-        return []
-
     targets = {
         "2Y": 365 * 2,
         "5Y": 365 * 5,
@@ -448,10 +413,9 @@ def select_gsecs(rows):
     }
 
     selected = []
-
     used = set()
 
-    for tenor, target_days in targets.items():
+    for tenor, target in targets.items():
 
         candidates = [
             row
@@ -465,9 +429,10 @@ def select_gsecs(rows):
 
         best = min(
             candidates,
-            key=lambda row: abs(
+            key=lambda row:
+            abs(
                 row["residual_days"]
-                - target_days
+                - target
             ),
         )
 
@@ -493,24 +458,19 @@ def select_tbills(rows):
     for row in rows:
 
         security = row["security_description"]
-        maturity = row["maturity_date"]
-        lty = row["lty"]
 
         if not security:
             continue
 
-        if not maturity:
+        if row["maturity_date"] is None:
             continue
 
-        if lty is None or lty <= 0:
+        if row["lty"] is None or row["lty"] <= 0:
             continue
 
-        # ----------------------------------------------------
-        # Identify T-Bill bucket from SECURITY DESCRIPTION
-        # ----------------------------------------------------
-
+        # Must contain DTB
         match = re.search(
-            r"^\s*(0?91|182|364)\s+DTB\b",
+            r"^\s*(091|91|182|364)\s+DTB\b",
             security,
             re.IGNORECASE,
         )
@@ -518,15 +478,15 @@ def select_tbills(rows):
         if not match:
             continue
 
-        bucket = match.group(1)
+        code = match.group(1)
 
-        if bucket in ("091", "91"):
+        if code in ("091", "91"):
             tenor = "91D"
 
-        elif bucket == "182":
+        elif code == "182":
             tenor = "182D"
 
-        elif bucket == "364":
+        elif code == "364":
             tenor = "364D"
 
         else:
@@ -539,10 +499,6 @@ def select_tbills(rows):
     print(
         f"VALID T-BILLS: {len(valid)}"
     )
-
-    # --------------------------------------------------------
-    # Select one security for each bucket
-    # --------------------------------------------------------
 
     selected = []
 
@@ -559,15 +515,18 @@ def select_tbills(rows):
         ]
 
         if not candidates:
+
             print(
                 f"No T-Bill found for {tenor}"
             )
+
             continue
 
-        # Prefer the earliest maturity within
-        # the relevant T-Bill bucket.
+        # Select nearest maturity
+        # for that specific bucket.
         candidates.sort(
-            key=lambda x: x["maturity_date"]
+            key=lambda x:
+            x["maturity_date"]
         )
 
         selected.append(
@@ -578,7 +537,7 @@ def select_tbills(rows):
 
 
 # ============================================================
-# MAIN PLAYWRIGHT FETCHER
+# MAIN FETCHER
 # ============================================================
 
 async def _fetch_ndsom_data():
@@ -612,9 +571,9 @@ async def _fetch_ndsom_data():
                 5000
             )
 
-            # ====================================================
-            # G-SEC
-            # ====================================================
+            # ==================================================
+            # G-SECS
+            # ==================================================
 
             print(
                 "Reading G-Sec Market Watch..."
@@ -649,21 +608,19 @@ async def _fetch_ndsom_data():
                     row["ltp"],
                 )
 
-            # ====================================================
-            # CLICK T-BILLS TAB
-            # ====================================================
+            # ==================================================
+            # T-BILL TAB
+            # ==================================================
 
             print(
                 "Looking for T-Bills tab..."
             )
 
-            tbill_clicked = False
+            clicked = False
 
             selectors = [
                 "text=T-Bills Mkt. Watch",
                 "text=T-Bills",
-                "text=T Bill",
-                "text=TBills",
             ]
 
             for selector in selectors:
@@ -680,7 +637,7 @@ async def _fetch_ndsom_data():
                             timeout=5000
                         )
 
-                        tbill_clicked = True
+                        clicked = True
 
                         print(
                             "T-Bill tab clicked:",
@@ -692,19 +649,19 @@ async def _fetch_ndsom_data():
                 except Exception:
                     continue
 
-            if not tbill_clicked:
+            if not clicked:
 
                 print(
-                    "WARNING: T-Bill tab could not be clicked"
+                    "WARNING: Could not click T-Bill tab"
                 )
 
             await page.wait_for_timeout(
                 3000
             )
 
-            # ====================================================
-            # T-BILL TABLE
-            # ====================================================
+            # ==================================================
+            # T-BILLS
+            # ==================================================
 
             print(
                 "Searching specifically for DTB rows..."
@@ -738,7 +695,7 @@ async def _fetch_ndsom_data():
                 )
 
             print(
-                "================================================"
+                "========================================"
             )
 
             print(
@@ -754,7 +711,7 @@ async def _fetch_ndsom_data():
             )
 
             print(
-                "================================================"
+                "========================================"
             )
 
             return {
@@ -779,7 +736,7 @@ def fetch_ndsom_data():
 
 
 # ============================================================
-# LOCAL TEST
+# TEST
 # ============================================================
 
 if __name__ == "__main__":
