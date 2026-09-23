@@ -29,66 +29,141 @@ engine = create_engine(
 # ============================================================
 
 def ensure_table():
+def ensure_table():
 
     with engine.begin() as conn:
 
         conn.execute(
             text(
                 """
-                CREATE TABLE IF NOT EXISTS observations (
-
+                CREATE TABLE IF NOT EXISTS public.observations (
                     id BIGSERIAL PRIMARY KEY,
-
                     observation_date DATE NOT NULL,
-
                     source TEXT NOT NULL,
-
                     series TEXT NOT NULL,
-
                     tenor TEXT NOT NULL,
-
                     value DOUBLE PRECISION,
-
                     unit TEXT,
-
                     publication_time TIMESTAMP,
-
                     source_url TEXT,
-
                     status TEXT,
-
                     security_description TEXT,
-
                     maturity_date DATE,
-
                     ltp DOUBLE PRECISION
-
                 );
                 """
             )
         )
 
-        # Add newer columns if the table already existed
-        for statement in [
-            """
-            ALTER TABLE observations
-            ADD COLUMN IF NOT EXISTS security_description TEXT;
-            """,
-            """
-            ALTER TABLE observations
-            ADD COLUMN IF NOT EXISTS maturity_date DATE;
-            """,
-            """
-            ALTER TABLE observations
-            ADD COLUMN IF NOT EXISTS ltp DOUBLE PRECISION;
-            """,
-            """
-            ALTER TABLE observations
-            ADD COLUMN IF NOT EXISTS publication_time TIMESTAMP;
-            """,
-        ]:
+        conn.execute(
+            text(
+                """
+                ALTER TABLE public.observations
+                ADD COLUMN IF NOT EXISTS observation_date DATE;
+                """
+            )
+        )
 
-            conn.execute(text(statement))
+        conn.execute(
+            text(
+                """
+                ALTER TABLE public.observations
+                ADD COLUMN IF NOT EXISTS source TEXT;
+                """
+            )
+        )
+
+        conn.execute(
+            text(
+                """
+                ALTER TABLE public.observations
+                ADD COLUMN IF NOT EXISTS series TEXT;
+                """
+            )
+        )
+
+        conn.execute(
+            text(
+                """
+                ALTER TABLE public.observations
+                ADD COLUMN IF NOT EXISTS tenor TEXT;
+                """
+            )
+        )
+
+        conn.execute(
+            text(
+                """
+                ALTER TABLE public.observations
+                ADD COLUMN IF NOT EXISTS value DOUBLE PRECISION;
+                """
+            )
+        )
+
+        conn.execute(
+            text(
+                """
+                ALTER TABLE public.observations
+                ADD COLUMN IF NOT EXISTS unit TEXT;
+                """
+            )
+        )
+
+        conn.execute(
+            text(
+                """
+                ALTER TABLE public.observations
+                ADD COLUMN IF NOT EXISTS publication_time TIMESTAMP;
+                """
+            )
+        )
+
+        conn.execute(
+            text(
+                """
+                ALTER TABLE public.observations
+                ADD COLUMN IF NOT EXISTS source_url TEXT;
+                """
+            )
+        )
+
+        conn.execute(
+            text(
+                """
+                ALTER TABLE public.observations
+                ADD COLUMN IF NOT EXISTS status TEXT;
+                """
+            )
+        )
+
+        conn.execute(
+            text(
+                """
+                ALTER TABLE public.observations
+                ADD COLUMN IF NOT EXISTS security_description TEXT;
+                """
+            )
+        )
+
+        conn.execute(
+            text(
+                """
+                ALTER TABLE public.observations
+                ADD COLUMN IF NOT EXISTS maturity_date DATE;
+                """
+            )
+        )
+
+        conn.execute(
+            text(
+                """
+                ALTER TABLE public.observations
+                ADD COLUMN IF NOT EXISTS ltp DOUBLE PRECISION;
+                """
+            )
+        )
+
+        print("Database table check completed.")
 
 
 # ============================================================
@@ -115,7 +190,7 @@ def save_observation(
         conn.execute(
             text(
                 """
-                INSERT INTO observations
+                INSERT INTO public.observations
                 (
                     observation_date,
                     source,
