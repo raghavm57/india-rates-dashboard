@@ -1,12 +1,14 @@
 import os
 import json
 from io import StringIO
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
 from sqlalchemy import create_engine, text
+
+from ndsom_fetcher import fetch_ndsom_data
 
 
 # ============================================================
@@ -96,6 +98,10 @@ def ensure_table():
                 publication_time TIMESTAMPTZ,
                 source_url TEXT,
 
+                security_description TEXT,
+                maturity_date DATE,
+                ltp DOUBLE PRECISION,
+
                 status TEXT NOT NULL DEFAULT 'published',
 
                 PRIMARY KEY (
@@ -105,6 +111,25 @@ def ensure_table():
                     tenor
                 )
             );
+        """))
+
+        # Existing table may already exist without these columns.
+        conn.execute(text("""
+            ALTER TABLE observations
+            ADD COLUMN IF NOT EXISTS
+            security_description TEXT;
+        """))
+
+        conn.execute(text("""
+            ALTER TABLE observations
+            ADD COLUMN IF NOT EXISTS
+            maturity_date DATE;
+        """))
+
+        conn.execute(text("""
+            ALTER TABLE observations
+            ADD COLUMN IF NOT EXISTS
+            ltp DOUBLE PRECISION;
         """))
 
 
@@ -118,7 +143,10 @@ def save_observation(
     series,
     tenor,
     value,
-    source_url
+    source_url,
+    security_description=None,
+    maturity_date=None,
+    ltp=None
 ):
 
     if value is None:
@@ -135,6 +163,9 @@ def save_observation(
             unit,
             publication_time,
             source_url,
+            security_description,
+            maturity_date,
+            ltp,
             status
         )
         VALUES
@@ -147,6 +178,9 @@ def save_observation(
             '%',
             CURRENT_TIMESTAMP,
             :source_url,
+            :security_description,
+            :maturity_date,
+            :ltp,
             'published'
         )
         ON CONFLICT
@@ -158,13 +192,23 @@ def save_observation(
         )
         DO UPDATE SET
 
-            value = EXCLUDED.value,
+            value =
+                EXCLUDED.value,
 
             publication_time =
                 EXCLUDED.publication_time,
 
             source_url =
                 EXCLUDED.source_url,
+
+            security_description =
+                EXCLUDED.security_description,
+
+            maturity_date =
+                EXCLUDED.maturity_date,
+
+            ltp =
+                EXCLUDED.ltp,
 
             status =
                 EXCLUDED.status
@@ -180,7 +224,19 @@ def save_observation(
                 "series": series,
                 "tenor": tenor,
                 "value": float(value),
-                "source_url": source_url
+                "source_url": source_url,
+                "security_description":
+                    security_description,
+                "maturity_date":
+                    maturity_date,
+                "ltp":
+                    float(ltp)
+                    if ltp not in (
+                        None,
+                        "",
+                        "null"
+                    )
+                    else None
             }
         )
 
@@ -543,7 +599,7 @@ def save_ois(reference_date):
 
 
 # ============================================================
-# G-SEC
+# LEGACY G-SEC
 # ============================================================
 
 def fetch_gsec():
@@ -633,11 +689,7 @@ def save_gsec():
         ]
     )
 
-    # Dashboard tenor mapping
     wanted = {
-
-        "2Y-3Y":
-            "3Y",
 
         "4Y-5Y":
             "5Y",
@@ -676,7 +728,241 @@ def save_gsec():
         count += 1
 
     print(
-        f"G-sec observations saved: {count}"
+        f"Legacy G-sec observations saved: {count}"
+    )
+
+
+# ============================================================
+# NDS-OM
+# ============================================================
+
+def parse_maturity_date(value):
+
+    try:
+
+        return datetime.strptime(
+            value.strip(),
+            "%d/%m/%Y"
+        ).date()
+
+    except Exception:
+
+        return None
+
+
+def select_gsec_bucket(
+    gsecs,
+    target_years
+):
+
+    today = datetime.now(
+        ZoneInfo("Asia/Kolkata")
+    ).date()
+
+    target_date = today + timedelta(
+        days=365.25 * target_years
+    )
+
+    candidates = []
+
+    for item in gsecs:
+
+        maturity = parse_maturity_date(
+            item["maturity_date"]
+        )
+
+        if maturity is None:
+            continue
+
+        if maturity <= today:
+            continue
+
+        try:
+
+            lty = float(
+                item["lty"]
+            )
+
+        except Exception:
+
+            continue
+
+        if lty <= 0:
+            continue
+
+        distance = abs(
+            (
+                maturity -
+                target_date
+            ).days
+        )
+
+        candidates.append(
+            (
+                distance,
+                maturity,
+                item
+            )
+        )
+
+    if not candidates:
+        return None
+
+    candidates.sort(
+        key=lambda x: (
+            x[0],
+            x[1]
+        )
+    )
+
+    return candidates[0][2]
+
+
+def save_ndsom(reference_date):
+
+    print(
+        "\nStarting NDS-OM browser fetch..."
+    )
+
+    result = fetch_ndsom_data()
+
+    gsecs = result.get(
+        "gsecs",
+        []
+    )
+
+    tbills = result.get(
+        "tbills",
+        []
+    )
+
+    print(
+        f"NDS-OM G-Secs received: "
+        f"{len(gsecs)}"
+    )
+
+    print(
+        f"NDS-OM T-Bills received: "
+        f"{len(tbills)}"
+    )
+
+    # --------------------------------------------------------
+    # G-SEC BUCKETS
+    # --------------------------------------------------------
+
+    gsec_targets = {
+
+        "2Y": 2,
+
+        "5Y": 5,
+
+        "10Y": 10
+    }
+
+    gsec_count = 0
+
+    for tenor, years in gsec_targets.items():
+
+        item = select_gsec_bucket(
+            gsecs,
+            years
+        )
+
+        if item is None:
+
+            print(
+                f"NDS-OM {tenor}: "
+                f"not found"
+            )
+
+            continue
+
+        maturity = parse_maturity_date(
+            item["maturity_date"]
+        )
+
+        save_observation(
+            obs_date=reference_date,
+            source="NDS-OM",
+            series="GSEC",
+            tenor=tenor,
+            value=float(item["lty"]),
+            source_url=(
+                "https://www.ccilindia.com/"
+                "market-watch"
+            ),
+            security_description=
+                item["security_description"],
+            maturity_date=maturity,
+            ltp=item.get("ltp")
+        )
+
+        print(
+            f"NDS-OM GSEC {tenor}: "
+            f"{item['security_description']} | "
+            f"{item['maturity_date']} | "
+            f"LTY {item['lty']}"
+        )
+
+        gsec_count += 1
+
+    # --------------------------------------------------------
+    # T-BILLS
+    # --------------------------------------------------------
+
+    tbill_count = 0
+
+    for item in tbills:
+
+        tenor = item.get(
+            "tenor"
+        )
+
+        if tenor not in {
+            "91D",
+            "182D",
+            "364D"
+        }:
+
+            continue
+
+        maturity = parse_maturity_date(
+            item["maturity_date"]
+        )
+
+        save_observation(
+            obs_date=reference_date,
+            source="NDS-OM",
+            series="TBILL",
+            tenor=tenor,
+            value=float(item["lty"]),
+            source_url=(
+                "https://www.ccilindia.com/"
+                "market-watch"
+            ),
+            security_description=
+                item["security_description"],
+            maturity_date=maturity,
+            ltp=item.get("ltp")
+        )
+
+        print(
+            f"NDS-OM T-Bill {tenor}: "
+            f"{item['security_description']} | "
+            f"{item['maturity_date']} | "
+            f"LTY {item['lty']}"
+        )
+
+        tbill_count += 1
+
+    print(
+        f"NDS-OM G-Secs saved: "
+        f"{gsec_count}"
+    )
+
+    print(
+        f"NDS-OM T-Bills saved: "
+        f"{tbill_count}"
     )
 
 
@@ -687,16 +973,10 @@ def save_gsec():
 if __name__ == "__main__":
 
     print(
-        "Starting CCIL market-data collector..."
+        "Starting market-data collector..."
     )
 
     ensure_table()
-
-    # --------------------------------------------------------
-    # Money market
-    # --------------------------------------------------------
-
-    save_money_market()
 
     # --------------------------------------------------------
     # India date
@@ -711,7 +991,13 @@ if __name__ == "__main__":
     )
 
     # --------------------------------------------------------
-    # Global bonds
+    # Money market
+    # --------------------------------------------------------
+
+    save_money_market()
+
+    # --------------------------------------------------------
+    # TradingView
     # --------------------------------------------------------
 
     save_tradingview(
@@ -739,15 +1025,32 @@ if __name__ == "__main__":
         )
 
     # --------------------------------------------------------
-    # G-sec
+    # Legacy CCIL G-Sec
     # --------------------------------------------------------
 
+    # Keep this for historical continuity.
     save_gsec()
 
     # --------------------------------------------------------
-    # Finished
+    # NDS-OM G-Secs + T-Bills
     # --------------------------------------------------------
 
+    save_ndsom(
+        india_date
+    )
+
+    # --------------------------------------------------------
+    # FINISHED
+    # -------------------------------------
+
     print(
-        "CCIL collection completed successfully."
+        "\n=========================================="
+    )
+
+    print(
+        "MARKET-DATA COLLECTION COMPLETED"
+    )
+
+    print(
+        "=========================================="
     )
