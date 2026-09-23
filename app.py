@@ -2,10 +2,21 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine, text
 
+
+# ============================================================
+# PAGE CONFIG
+# ============================================================
+
 st.set_page_config(
     page_title="India Rates Dashboard",
+    page_icon="📊",
     layout="wide"
 )
+
+
+# ============================================================
+# DATABASE
+# ============================================================
 
 DATABASE_URL = st.secrets["DATABASE_URL"]
 
@@ -27,7 +38,11 @@ df = pd.read_sql(
             series,
             tenor,
             value,
-            unit
+            unit,
+            security_description,
+            maturity_date,
+            ltp,
+            publication_time
         FROM observations
         WHERE status = 'published'
         ORDER BY date
@@ -45,27 +60,43 @@ if df.empty:
     st.stop()
 
 
+# ============================================================
+# DATA CLEANING
+# ============================================================
+
 df["date"] = pd.to_datetime(
     df["date"]
 )
 
+df["maturity_date"] = pd.to_datetime(
+    df["maturity_date"],
+    errors="coerce"
+)
+
+df["value"] = pd.to_numeric(
+    df["value"],
+    errors="coerce"
+)
+
+df["ltp"] = pd.to_numeric(
+    df["ltp"],
+    errors="coerce"
+)
+
 
 # ============================================================
-# GLOBAL LATEST DATE
+# HELPERS
 # ============================================================
 
-latest_date = df["date"].max()
-
-
-# ============================================================
-# HELPER FUNCTIONS
-# ============================================================
-
-def get_market_dates(source, series):
+def get_market_dates(
+    source,
+    series
+):
 
     market_df = df[
         (df["source"] == source)
-        & (df["series"] == series)
+        &
+        (df["series"] == series)
     ]
 
     dates = sorted(
@@ -74,7 +105,12 @@ def get_market_dates(source, series):
     )
 
     if not dates:
-        return None, None, None
+
+        return (
+            None,
+            None,
+            None
+        )
 
     today_date = dates[0]
 
@@ -85,7 +121,8 @@ def get_market_dates(source, series):
     )
 
     one_week_target = (
-        today_date - pd.Timedelta(days=7)
+        today_date -
+        pd.Timedelta(days=7)
     )
 
     week_dates = [
@@ -111,20 +148,25 @@ def get_value(
     source,
     series,
     tenor,
-    date
+    observation_date
 ):
 
-    if date is None:
+    if observation_date is None:
+
         return None
 
     x = df[
         (df["source"] == source)
-        & (df["series"] == series)
-        & (df["tenor"] == tenor)
-        & (df["date"] == date)
+        &
+        (df["series"] == series)
+        &
+        (df["tenor"] == tenor)
+        &
+        (df["date"] == observation_date)
     ]
 
     if x.empty:
+
         return None
 
     return float(
@@ -132,9 +174,65 @@ def get_value(
     )
 
 
-def format_value(value):
+def get_metadata(
+    source,
+    series,
+    tenor,
+    observation_date
+):
+
+    if observation_date is None:
+
+        return {
+            "security": None,
+            "maturity": None,
+            "ltp": None
+        }
+
+    x = df[
+        (df["source"] == source)
+        &
+        (df["series"] == series)
+        &
+        (df["tenor"] == tenor)
+        &
+        (df["date"] == observation_date)
+    ]
+
+    if x.empty:
+
+        return {
+            "security": None,
+            "maturity": None,
+            "ltp": None
+        }
+
+    row = x.iloc[0]
+
+    return {
+        "security":
+            row.get(
+                "security_description"
+            ),
+
+        "maturity":
+            row.get(
+                "maturity_date"
+            ),
+
+        "ltp":
+            row.get(
+                "ltp"
+            )
+    }
+
+
+def format_value(
+    value
+):
 
     if value is None:
+
         return "—"
 
     return f"{value:.3f}"
@@ -146,23 +244,35 @@ def format_change(
     rate=True
 ):
 
-    if current is None or previous is None:
+    if (
+        current is None
+        or previous is None
+    ):
+
         return "—"
 
-    change = current - previous
+    change = (
+        current -
+        previous
+    )
 
     if rate:
 
-        return f"{change * 100:+.1f} bps"
+        return (
+            f"{change * 100:+.1f} bps"
+        )
 
-    return f"{change:+.3f}"
+    return (
+        f"{change:+.3f}"
+    )
 
 
 def market_row(
     name,
     source,
     series,
-    tenor=""
+    tenor="",
+    rate=True
 ):
 
     (
@@ -197,29 +307,37 @@ def market_row(
 
     return {
 
-        "Particulars": name,
+        "Particulars":
+            name,
 
-        "Today": format_value(
-            today
-        ),
+        "Today":
+            format_value(
+                today
+            ),
 
-        "Yesterday": format_value(
-            yesterday
-        ),
+        "Yesterday":
+            format_value(
+                yesterday
+            ),
 
-        "1 Week": format_value(
-            week
-        ),
+        "1 Week":
+            format_value(
+                week
+            ),
 
-        "Δ 1D": format_change(
-            today,
-            yesterday
-        ),
+        "Δ 1D":
+            format_change(
+                today,
+                yesterday,
+                rate
+            ),
 
-        "Δ 1W": format_change(
-            today,
-            week
-        )
+        "Δ 1W":
+            format_change(
+                today,
+                week,
+                rate
+            )
     }
 
 
@@ -231,8 +349,10 @@ st.title(
     "India Rates Dashboard"
 )
 
+latest_date = df["date"].max()
+
 st.caption(
-    f"Latest available market date: "
+    f"Latest database observation: "
     f"{latest_date.strftime('%d-%b-%Y')}"
 )
 
@@ -266,7 +386,6 @@ ois_tenors = [
     ("OIS 10Y", "10Y")
 ]
 
-
 ois_rows = []
 
 for name, tenor in ois_tenors:
@@ -280,9 +399,10 @@ for name, tenor in ois_tenors:
         )
     )
 
-
 st.dataframe(
-    pd.DataFrame(ois_rows),
+    pd.DataFrame(
+        ois_rows
+    ),
     use_container_width=True,
     hide_index=True
 )
@@ -298,18 +418,26 @@ st.subheader(
 
 money_market = [
 
-    ("Call WACR", "CALL_WACR"),
+    (
+        "Call WACR",
+        "CALL_WACR"
+    ),
 
-    ("TREPS WACR", "TREPS_WACR"),
+    (
+        "TREPS WACR",
+        "TREPS_WACR"
+    ),
 
-    ("Repo WACR", "REPO_WACR"),
+    (
+        "Basket Repo WACR",
+        "REPO_WACR"
+    ),
 
     (
         "Special Repo WACR",
         "SPECIAL_REPO_WACR"
     )
 ]
-
 
 money_rows = []
 
@@ -319,55 +447,282 @@ for name, series in money_market:
         market_row(
             name,
             "CCIL",
-            series,
-            ""
+            series
         )
     )
 
-
 st.dataframe(
-    pd.DataFrame(money_rows),
+    pd.DataFrame(
+        money_rows
+    ),
     use_container_width=True,
     hide_index=True
 )
 
 
 # ============================================================
-# GOVERNMENT SECURITIES
+# T-BILLS
 # ============================================================
 
 st.subheader(
-    "Government Securities"
+    "Treasury Bills — NDS-OM"
+)
+
+tbill_tenors = [
+
+    (
+        "91D",
+        "91D"
+    ),
+
+    (
+        "182D",
+        "182D"
+    ),
+
+    (
+        "364D",
+        "364D"
+    )
+]
+
+tbill_rows = []
+
+for label, tenor in tbill_tenors:
+
+    (
+        today_date,
+        yesterday_date,
+        one_week_date
+    ) = get_market_dates(
+        "NDS-OM",
+        "TBILL"
+    )
+
+    today = get_value(
+        "NDS-OM",
+        "TBILL",
+        tenor,
+        today_date
+    )
+
+    yesterday = get_value(
+        "NDS-OM",
+        "TBILL",
+        tenor,
+        yesterday_date
+    )
+
+    week = get_value(
+        "NDS-OM",
+        "TBILL",
+        tenor,
+        one_week_date
+    )
+
+    metadata = get_metadata(
+        "NDS-OM",
+        "TBILL",
+        tenor,
+        today_date
+    )
+
+    security = metadata["security"]
+
+    maturity = metadata["maturity"]
+
+    if pd.notna(maturity):
+
+        maturity_text = (
+            maturity.strftime(
+                "%d-%b-%Y"
+            )
+        )
+
+    else:
+
+        maturity_text = "—"
+
+    tbill_rows.append({
+
+        "Tenor":
+            label,
+
+        "Security":
+            security
+            if pd.notna(security)
+            else "—",
+
+        "Maturity":
+            maturity_text,
+
+        "Today":
+            format_value(
+                today
+            ),
+
+        "Yesterday":
+            format_value(
+                yesterday
+            ),
+
+        "1 Week":
+            format_value(
+                week
+            ),
+
+        "Δ 1D":
+            format_change(
+                today,
+                yesterday
+            ),
+
+        "Δ 1W":
+            format_change(
+                today,
+                week
+            )
+    })
+
+
+st.dataframe(
+    pd.DataFrame(
+        tbill_rows
+    ),
+    use_container_width=True,
+    hide_index=True
+)
+
+
+# ============================================================
+# G-SEC
+# ============================================================
+
+st.subheader(
+    "Government Securities — NDS-OM"
 )
 
 gsec_tenors = [
 
-    ("3Y G-Sec", "3Y"),
+    (
+        "2Y",
+        "2Y"
+    ),
 
-    ("5Y G-Sec", "5Y"),
+    (
+        "5Y",
+        "5Y"
+    ),
 
-    ("10Y G-Sec", "10Y"),
-
-    ("30Y G-Sec", "30Y")
+    (
+        "10Y",
+        "10Y"
+    )
 ]
-
 
 gsec_rows = []
 
-for name, tenor in gsec_tenors:
+for label, tenor in gsec_tenors:
 
-    gsec_rows.append(
-        market_row(
-            name,
-            "CCIL",
-            "GSEC",
-            tenor
-        )
+    (
+        today_date,
+        yesterday_date,
+        one_week_date
+    ) = get_market_dates(
+        "NDS-OM",
+        "GSEC"
     )
+
+    today = get_value(
+        "NDS-OM",
+        "GSEC",
+        tenor,
+        today_date
+    )
+
+    yesterday = get_value(
+        "NDS-OM",
+        "GSEC",
+        tenor,
+        yesterday_date
+    )
+
+    week = get_value(
+        "NDS-OM",
+        "GSEC",
+        tenor,
+        one_week_date
+    )
+
+    metadata = get_metadata(
+        "NDS-OM",
+        "GSEC",
+        tenor,
+        today_date
+    )
+
+    security = metadata["security"]
+
+    maturity = metadata["maturity"]
+
+    if pd.notna(maturity):
+
+        maturity_text = (
+            maturity.strftime(
+                "%d-%b-%Y"
+            )
+        )
+
+    else:
+
+        maturity_text = "—"
+
+    gsec_rows.append({
+
+        "Tenor":
+            label,
+
+        "Security":
+            security
+            if pd.notna(security)
+            else "—",
+
+        "Maturity":
+            maturity_text,
+
+        "Today":
+            format_value(
+                today
+            ),
+
+        "Yesterday":
+            format_value(
+                yesterday
+            ),
+
+        "1 Week":
+            format_value(
+                week
+            ),
+
+        "Δ 1D":
+            format_change(
+                today,
+                yesterday
+            ),
+
+        "Δ 1W":
+            format_change(
+                today,
+                week
+            )
+    })
 
 
 st.dataframe(
-    pd.DataFrame(gsec_rows),
+    pd.DataFrame(
+        gsec_rows
+    ),
     use_container_width=True,
     hide_index=True
 )
@@ -383,13 +738,21 @@ st.subheader(
 
 global_bonds = [
 
-    ("US 10Y", "US10Y"),
+    (
+        "US 10Y",
+        "US10Y"
+    ),
 
-    ("Japan 10Y", "JP10Y"),
+    (
+        "Japan 10Y",
+        "JP10Y"
+    ),
 
-    ("China 10Y", "CN10Y")
+    (
+        "China 10Y",
+        "CN10Y"
+    )
 ]
-
 
 global_rows = []
 
@@ -404,31 +767,33 @@ for name, tenor in global_bonds:
         )
     )
 
-
 st.dataframe(
-    pd.DataFrame(global_rows),
+    pd.DataFrame(
+        global_rows
+    ),
     use_container_width=True,
     hide_index=True
 )
 
 
 # ============================================================
-# DATABASE INFORMATION
+# FOOTER
 # ============================================================
 
 st.divider()
 
 st.caption(
-    f"Global latest date: "
-    f"{latest_date.strftime('%d-%b-%Y')}"
+    "NDS-OM: G-Secs & T-Bills • "
+    "CCIL: OIS & Money Market • "
+    "TradingView: Global Bonds"
 )
 
 st.caption(
-    "Each market section uses its own latest available "
-    "observation date."
+    "Today reflects the latest observation stored "
+    "in Neon. Live-on-refresh fetching will be added "
+    "as the next step."
 )
 
 st.caption(
-    "Source: CCIL / TradingView • "
     "Database: Neon PostgreSQL"
-)
+    )
