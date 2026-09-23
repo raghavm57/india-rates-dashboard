@@ -4,845 +4,933 @@ from itertools import combinations, permutations
 
 from playwright.async_api import async_playwright
 
-# ============================================================
-# PAGE CONFIG
-# ============================================================
 
-st.set_page_config(
-    page_title="India Rates Dashboard",
-    page_icon="📊",
-    layout="wide"
-)
-
-
-# ============================================================
-# DATABASE
-# ============================================================
-
-DATABASE_URL = st.secrets["DATABASE_URL"]
-
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True
-)
-
-
-# ============================================================
-# LOAD DATA
-# ============================================================
-
-df = pd.read_sql(
-    text("""
-        SELECT
-            date,
-            source,
-            series,
-            tenor,
-            value,
-            unit,
-            security_description,
-            maturity_date,
-            ltp,
-            publication_time
-        FROM observations
-        WHERE status = 'published'
-        ORDER BY date
-    """),
-    engine
-)
-
-if df.empty:
-
-    st.info(
-        "PostgreSQL is connected, but no market observations "
-        "have been loaded yet."
-    )
-
-    st.stop()
-
-
-# ============================================================
-# DATA CLEANING
-# ============================================================
-
-df["date"] = pd.to_datetime(
-    df["date"]
-)
-
-df["maturity_date"] = pd.to_datetime(
-    df["maturity_date"],
-    errors="coerce"
-)
-
-df["value"] = pd.to_numeric(
-    df["value"],
-    errors="coerce"
-)
-
-df["ltp"] = pd.to_numeric(
-    df["ltp"],
-    errors="coerce"
-)
-
-df["publication_time"] = pd.to_datetime(
-    df["publication_time"],
-    errors="coerce"
-)
+CCIL_URL = "https://www.ccilindia.com/market-watch"
 
 
 # ============================================================
 # HELPERS
 # ============================================================
 
-def get_market_dates(
-    source,
-    series
-):
-
-    market_df = df[
-        (df["source"] == source)
-        &
-        (df["series"] == series)
-    ]
-
-    dates = sorted(
-        market_df["date"].drop_duplicates(),
-        reverse=True
-    )
-
-    if not dates:
-
-        return (
-            None,
-            None,
-            None
-        )
-
-    today_date = dates[0]
-
-    yesterday_date = (
-        dates[1]
-        if len(dates) > 1
-        else None
-    )
-
-    one_week_target = (
-        today_date -
-        pd.Timedelta(days=7)
-    )
-
-    week_dates = [
-        d
-        for d in dates
-        if d <= one_week_target
-    ]
-
-    one_week_date = (
-        week_dates[0]
-        if week_dates
-        else None
-    )
-
-    return (
-        today_date,
-        yesterday_date,
-        one_week_date
-    )
-
-
-def get_value(
-    source,
-    series,
-    tenor,
-    observation_date
-):
-
-    if observation_date is None:
-
-        return None
-
-    x = df[
-        (df["source"] == source)
-        &
-        (df["series"] == series)
-        &
-        (df["tenor"] == tenor)
-        &
-        (df["date"] == observation_date)
-    ]
-
-    if x.empty:
-
-        return None
-
-    return float(
-        x.iloc[0]["value"]
-    )
-
-
-def get_metadata(
-    source,
-    series,
-    tenor,
-    observation_date
-):
-
-    if observation_date is None:
-
-        return {
-            "security": None,
-            "maturity": None,
-            "ltp": None
-        }
-
-    x = df[
-        (df["source"] == source)
-        &
-        (df["series"] == series)
-        &
-        (df["tenor"] == tenor)
-        &
-        (df["date"] == observation_date)
-    ]
-
-    if x.empty:
-
-        return {
-            "security": None,
-            "maturity": None,
-            "ltp": None
-        }
-
-    row = x.iloc[0]
-
-    return {
-        "security":
-            row.get(
-                "security_description"
-            ),
-
-        "maturity":
-            row.get(
-                "maturity_date"
-            ),
-
-        "ltp":
-            row.get(
-                "ltp"
-            )
-    }
-
-
-def format_value(
-    value
-):
+def clean_number(value):
 
     if value is None:
+        return None
 
-        return "—"
+    text = str(value).strip()
+    text = text.replace(",", "")
 
-    return f"{value:.3f}"
+    if text in ("", "-", "—", "NA", "N/A", "null", "None"):
+        return None
+
+    try:
+        return float(text)
+    except Exception:
+        return None
 
 
-def format_change(
-    current,
-    previous,
-    rate=True
-):
+def parse_date(value):
 
-    if (
-        current is None
-        or previous is None
-    ):
+    if value is None:
+        return None
 
-        return "—"
+    text = str(value).strip()
 
-    change = (
-        current -
-        previous
-    )
+    formats = [
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+        "%d/%m/%y",
+        "%d-%m-%y"
+    ]
 
-    if rate:
+    for fmt in formats:
 
-        return (
-            f"{change * 100:+.1f} bps"
+        try:
+            return datetime.strptime(
+                text,
+                fmt
+            ).date()
+
+        except Exception:
+            pass
+
+    return None
+
+
+def find_column(record, names):
+
+    normalized = {}
+
+    for key in record.keys():
+
+        clean_key = (
+            str(key)
+            .strip()
+            .lower()
+            .replace(" ", "")
+            .replace(".", "")
+            .replace("-", "")
+            .replace("_", "")
+            .replace("(", "")
+            .replace(")", "")
         )
 
-    return (
-        f"{change:+.3f}"
+        normalized[clean_key] = key
+
+    for name in names:
+
+        clean_name = (
+            name
+            .lower()
+            .replace(" ", "")
+            .replace(".", "")
+            .replace("-", "")
+            .replace("_", "")
+            .replace("(", "")
+            .replace(")", "")
+        )
+
+        if clean_name in normalized:
+
+            return normalized[clean_name]
+
+    return None
+
+
+def normalize_row(record):
+
+    security_col = find_column(
+        record,
+        [
+            "Security Description",
+            "SecurityDescription",
+            "Security"
+        ]
     )
 
-
-def market_row(
-    name,
-    source,
-    series,
-    tenor="",
-    rate=True
-):
-
-    (
-        today_date,
-        yesterday_date,
-        one_week_date
-    ) = get_market_dates(
-        source,
-        series
+    maturity_col = find_column(
+        record,
+        [
+            "Maturity Date",
+            "MaturityDate",
+            "Maturity"
+        ]
     )
 
-    today = get_value(
-        source,
-        series,
-        tenor,
-        today_date
+    ltp_col = find_column(
+        record,
+        ["LTP"]
     )
 
-    yesterday = get_value(
-        source,
-        series,
-        tenor,
-        yesterday_date
+    lty_col = find_column(
+        record,
+        ["LTY"]
     )
 
-    week = get_value(
-        source,
-        series,
-        tenor,
-        one_week_date
+    security = (
+        record.get(security_col)
+        if security_col
+        else None
+    )
+
+    maturity = parse_date(
+        record.get(maturity_col)
+        if maturity_col
+        else None
+    )
+
+    ltp = clean_number(
+        record.get(ltp_col)
+        if ltp_col
+        else None
+    )
+
+    lty = clean_number(
+        record.get(lty_col)
+        if lty_col
+        else None
     )
 
     return {
-
-        "Particulars":
-            name,
-
-        "Today":
-            format_value(
-                today
-            ),
-
-        "Yesterday":
-            format_value(
-                yesterday
-            ),
-
-        "1 Week":
-            format_value(
-                week
-            ),
-
-        "Δ 1D":
-            format_change(
-                today,
-                yesterday,
-                rate
-            ),
-
-        "Δ 1W":
-            format_change(
-                today,
-                week,
-                rate
-            )
+        "security_description": security,
+        "maturity_date": maturity,
+        "ltp": ltp,
+        "lty": lty
     }
 
 
+def residual_days(
+    maturity,
+    today
+):
+
+    if maturity is None:
+        return None
+
+    return (
+        maturity - today
+    ).days
+
+
 # ============================================================
-# LATEST UPDATE TIMESTAMP
+# TABLE READER
 # ============================================================
 
-timestamp_df = df[
-    df["publication_time"].notna()
-].copy()
+async def read_table(
+    page,
+    table_index
+):
 
-if not timestamp_df.empty:
+    tables = page.locator("table")
 
-    latest_timestamp = (
-        timestamp_df["publication_time"].max()
+    count = await tables.count()
+
+    if table_index >= count:
+        return []
+
+    table = tables.nth(
+        table_index
     )
 
-    # Convert timezone-aware timestamps to IST
-    if latest_timestamp.tzinfo is not None:
+    rows = table.locator("tr")
 
-        latest_timestamp = (
-            latest_timestamp
-            .tz_convert("Asia/Kolkata")
+    row_count = await rows.count()
+
+    if row_count == 0:
+        return []
+
+    raw_rows = []
+
+    for i in range(row_count):
+
+        cells = rows.nth(i).locator(
+            "th, td"
         )
 
-    else:
+        cell_count = await cells.count()
 
-        latest_timestamp = (
-            latest_timestamp
-            .tz_localize("Asia/Kolkata")
-        )
+        values = []
 
-    last_updated_text = (
-        latest_timestamp.strftime(
-            "%d-%b-%Y %I:%M:%S %p IST"
-        )
-    )
+        for j in range(cell_count):
 
-else:
+            value = await cells.nth(j).inner_text()
 
-    latest_date = df["date"].max()
-
-    last_updated_text = (
-        latest_date.strftime(
-            "%d-%b-%Y"
-        )
-    )
-
-
-# ============================================================
-# HEADER
-# ============================================================
-
-st.title(
-    "India Rates Dashboard"
-)
-
-st.caption(
-    f"🕒 Last updated: **{last_updated_text}**"
-)
-
-
-# ============================================================
-# OIS
-# ============================================================
-
-st.subheader(
-    "OIS Curve"
-)
-
-ois_tenors = [
-
-    ("OIS 1M", "1M"),
-
-    ("OIS 2M", "2M"),
-
-    ("OIS 3M", "3M"),
-
-    ("OIS 6M", "6M"),
-
-    ("OIS 1Y", "1Y"),
-
-    ("OIS 2Y", "2Y"),
-
-    ("OIS 3Y", "3Y"),
-
-    ("OIS 5Y", "5Y"),
-
-    ("OIS 10Y", "10Y")
-]
-
-ois_rows = []
-
-for name, tenor in ois_tenors:
-
-    ois_rows.append(
-        market_row(
-            name,
-            "CCIL",
-            "OIS",
-            tenor
-        )
-    )
-
-st.dataframe(
-    pd.DataFrame(
-        ois_rows
-    ),
-    use_container_width=True,
-    hide_index=True
-)
-
-
-# ============================================================
-# MONEY MARKET
-# ============================================================
-
-st.subheader(
-    "Money Market"
-)
-
-money_market = [
-
-    (
-        "Call WACR",
-        "CALL_WACR"
-    ),
-
-    (
-        "TREPS WACR",
-        "TREPS_WACR"
-    ),
-
-    (
-        "Basket Repo WACR",
-        "REPO_WACR"
-    ),
-
-    (
-        "Special Repo WACR",
-        "SPECIAL_REPO_WACR"
-    )
-]
-
-money_rows = []
-
-for name, series in money_market:
-
-    money_rows.append(
-        market_row(
-            name,
-            "CCIL",
-            series
-        )
-    )
-
-st.dataframe(
-    pd.DataFrame(
-        money_rows
-    ),
-    use_container_width=True,
-    hide_index=True
-)
-
-
-# ============================================================
-# T-BILLS
-# ============================================================
-
-st.subheader(
-    "Treasury Bills — NDS-OM"
-)
-
-tbill_tenors = [
-
-    (
-        "91D",
-        "91D"
-    ),
-
-    (
-        "182D",
-        "182D"
-    ),
-
-    (
-        "364D",
-        "364D"
-    )
-]
-
-tbill_rows = []
-
-for label, tenor in tbill_tenors:
-
-    (
-        today_date,
-        yesterday_date,
-        one_week_date
-    ) = get_market_dates(
-        "NDS-OM",
-        "TBILL"
-    )
-
-    today = get_value(
-        "NDS-OM",
-        "TBILL",
-        tenor,
-        today_date
-    )
-
-    yesterday = get_value(
-        "NDS-OM",
-        "TBILL",
-        tenor,
-        yesterday_date
-    )
-
-    week = get_value(
-        "NDS-OM",
-        "TBILL",
-        tenor,
-        one_week_date
-    )
-
-    metadata = get_metadata(
-        "NDS-OM",
-        "TBILL",
-        tenor,
-        today_date
-    )
-
-    security = metadata["security"]
-
-    maturity = metadata["maturity"]
-
-    if pd.notna(maturity):
-
-        maturity_text = (
-            maturity.strftime(
-                "%d-%b-%Y"
+            values.append(
+                value.strip()
             )
-        )
 
-    else:
+        if values:
+            raw_rows.append(values)
 
-        maturity_text = "—"
+    if len(raw_rows) < 2:
+        return []
 
-    tbill_rows.append({
+    headers = raw_rows[0]
 
-        "Tenor":
-            label,
+    records = []
 
-        "Security":
-            security
-            if pd.notna(security)
-            else "—",
+    for values in raw_rows[1:]:
 
-        "Maturity":
-            maturity_text,
+        if len(values) != len(headers):
+            continue
 
-        "Today":
-            format_value(
+        record = {}
+
+        for i, header in enumerate(headers):
+
+            record[
+                header
+            ] = values[i]
+
+        records.append(record)
+
+    return records
+
+
+# ============================================================
+# T-BILL SELECTION
+# ============================================================
+
+def select_tbills(
+    rows,
+    today
+):
+
+    targets = {
+        "91D": 91,
+        "182D": 182,
+        "364D": 364
+    }
+
+    selected = {}
+
+    used = set()
+
+    for tenor, target in targets.items():
+
+        candidates = []
+
+        for row in rows:
+
+            security = row[
+                "security_description"
+            ]
+
+            maturity = row[
+                "maturity_date"
+            ]
+
+            lty = row["lty"]
+
+            if not security:
+                continue
+
+            if security in used:
+                continue
+
+            if maturity is None:
+                continue
+
+            # Reject zero / blank LTY
+            if lty is None or lty <= 0:
+                continue
+
+            days = residual_days(
+                maturity,
                 today
-            ),
-
-        "Yesterday":
-            format_value(
-                yesterday
-            ),
-
-        "1 Week":
-            format_value(
-                week
-            ),
-
-        "Δ 1D":
-            format_change(
-                today,
-                yesterday
-            ),
-
-        "Δ 1W":
-            format_change(
-                today,
-                week
             )
-    })
 
+            if days is None or days <= 0:
+                continue
 
-st.dataframe(
-    pd.DataFrame(
-        tbill_rows
-    ),
-    use_container_width=True,
-    hide_index=True
-)
-
-
-# ============================================================
-# G-SEC
-# ============================================================
-
-st.subheader(
-    "Government Securities — NDS-OM"
-)
-
-gsec_tenors = [
-
-    (
-        "2Y",
-        "2Y"
-    ),
-
-    (
-        "5Y",
-        "5Y"
-    ),
-
-    (
-        "10Y",
-        "10Y"
-    )
-]
-
-gsec_rows = []
-
-for label, tenor in gsec_tenors:
-
-    (
-        today_date,
-        yesterday_date,
-        one_week_date
-    ) = get_market_dates(
-        "NDS-OM",
-        "GSEC"
-    )
-
-    today = get_value(
-        "NDS-OM",
-        "GSEC",
-        tenor,
-        today_date
-    )
-
-    yesterday = get_value(
-        "NDS-OM",
-        "GSEC",
-        tenor,
-        yesterday_date
-    )
-
-    week = get_value(
-        "NDS-OM",
-        "GSEC",
-        tenor,
-        one_week_date
-    )
-
-    metadata = get_metadata(
-        "NDS-OM",
-        "GSEC",
-        tenor,
-        today_date
-    )
-
-    security = metadata["security"]
-
-    maturity = metadata["maturity"]
-
-    if pd.notna(maturity):
-
-        maturity_text = (
-            maturity.strftime(
-                "%d-%b-%Y"
+            distance = abs(
+                days - target
             )
+
+            candidates.append(
+                (
+                    distance,
+                    row
+                )
+            )
+
+        if not candidates:
+
+            selected[tenor] = None
+            continue
+
+        candidates.sort(
+            key=lambda x: x[0]
         )
 
-    else:
+        chosen = candidates[0][1]
 
-        maturity_text = "—"
+        selected[tenor] = chosen
 
-    gsec_rows.append({
+        used.add(
+            chosen[
+                "security_description"
+            ]
+        )
 
-        "Tenor":
-            label,
+    return selected
 
-        "Security":
-            security
-            if pd.notna(security)
-            else "—",
 
-        "Maturity":
-            maturity_text,
+# ============================================================
+# G-SEC SELECTION
+# ============================================================
 
-        "Today":
-            format_value(
+def select_gsecs(
+    rows,
+    today
+):
+
+    targets = {
+        "2Y": 365 * 2,
+        "5Y": 365 * 5,
+        "10Y": 365 * 10
+    }
+
+    candidates = []
+
+    for row in rows:
+
+        security = row[
+            "security_description"
+        ]
+
+        maturity = row[
+            "maturity_date"
+        ]
+
+        lty = row["lty"]
+
+        if not security:
+            continue
+
+        if maturity is None:
+            continue
+
+        # Reject zero / blank LTY
+        if lty is None or lty <= 0:
+            continue
+
+        days = residual_days(
+            maturity,
+            today
+        )
+
+        if days is None or days <= 0:
+            continue
+
+        candidates.append({
+            "security": security,
+            "days": days,
+            "row": row
+        })
+
+    if len(candidates) < 3:
+
+        return {
+            "2Y": None,
+            "5Y": None,
+            "10Y": None
+        }
+
+    best_score = None
+    best_assignment = None
+
+    indices = range(
+        len(candidates)
+    )
+
+    # Find three DIFFERENT securities
+    # that collectively best match
+    # 2Y / 5Y / 10Y.
+
+    for combination_set in combinations(
+        indices,
+        3
+    ):
+
+        for permutation_set in permutations(
+            combination_set
+        ):
+
+            score = 0
+
+            for (
+                tenor,
+                index
+            ) in zip(
+                targets.keys(),
+                permutation_set
+            ):
+
+                target_days = targets[
+                    tenor
+                ]
+
+                actual_days = candidates[
+                    index
+                ]["days"]
+
+                score += abs(
+                    actual_days -
+                    target_days
+                )
+
+            if (
+                best_score is None
+                or score < best_score
+            ):
+
+                best_score = score
+
+                best_assignment = (
+                    permutation_set
+                )
+
+    result = {}
+
+    for (
+        tenor,
+        index
+    ) in zip(
+        targets.keys(),
+        best_assignment
+    ):
+
+        result[tenor] = candidates[
+            index
+        ]["row"]
+
+    return result
+
+
+# ============================================================
+# MAIN FETCHER
+# ============================================================
+
+async def _fetch_ndsom_data():
+
+    print("")
+    print(
+        "========================================"
+    )
+    print(
+        "NDS-OM MARKET WATCH"
+    )
+    print(
+        "========================================"
+    )
+
+    async with async_playwright() as p:
+
+        browser = await p.chromium.launch(
+            headless=True
+        )
+
+        page = await browser.new_page(
+            viewport={
+                "width": 1600,
+                "height": 1200
+            }
+        )
+
+        try:
+
+            # ------------------------------------------------
+            # OPEN CCIL
+            # ------------------------------------------------
+
+            await page.goto(
+                CCIL_URL,
+                wait_until="domcontentloaded",
+                timeout=60000
+            )
+
+            await page.wait_for_timeout(
+                5000
+            )
+
+            today = datetime.now().date()
+
+            # ------------------------------------------------
+            # G-SEC DATA
+            # ------------------------------------------------
+
+            print("")
+            print(
+                "================ G-SEC DATA ================"
+            )
+
+            gsec_raw = await read_table(
+                page,
+                0
+            )
+
+            print(
+                "TOTAL RAW G-SECS:",
+                len(gsec_raw)
+            )
+
+            gsec_rows = []
+
+            for record in gsec_raw:
+
+                row = normalize_row(
+                    record
+                )
+
+                if (
+                    row[
+                        "security_description"
+                    ]
+                    and row[
+                        "maturity_date"
+                    ]
+                ):
+
+                    gsec_rows.append(
+                        row
+                    )
+
+                    print(
+                        row[
+                            "security_description"
+                        ],
+                        "|",
+                        row[
+                            "maturity_date"
+                        ],
+                        "| LTY:",
+                        row["lty"],
+                        "| LTP:",
+                        row["ltp"]
+                    )
+
+            print(
+                "VALID G-SECS:",
+                len(gsec_rows)
+            )
+
+            # ------------------------------------------------
+            # T-BILL TAB
+            # ------------------------------------------------
+
+            print("")
+            print(
+                "================ T-BILL DATA ================"
+            )
+
+            clicked = False
+
+            selectors = [
+                "text=T-Bills Mkt. Watch",
+                "text=T-Bills",
+                "text=T Bills"
+            ]
+
+            for selector in selectors:
+
+                try:
+
+                    locator = page.locator(
+                        selector
+                    ).first
+
+                    if await locator.count() > 0:
+
+                        print(
+                            "Found T-Bill selector:",
+                            selector
+                        )
+
+                        await locator.click(
+                            timeout=10000
+                        )
+
+                        clicked = True
+
+                        print(
+                            "T-Bill tab clicked:",
+                            True
+                        )
+
+                        break
+
+                except Exception:
+                    pass
+
+            await page.wait_for_timeout(
+                2500
+            )
+
+            # ------------------------------------------------
+            # FIND T-BILL TABLE
+            # ------------------------------------------------
+
+            tbill_raw = []
+
+            table_count = await page.locator(
+                "table"
+            ).count()
+
+            for i in range(
+                table_count
+            ):
+
+                rows = await read_table(
+                    page,
+                    i
+                )
+
+                if not rows:
+                    continue
+
+                first_record = rows[0]
+
+                columns = " ".join(
+                    str(x).lower()
+                    for x in first_record.keys()
+                )
+
+                if (
+                    "security" in columns
+                    and "lty" in columns
+                ):
+
+                    tbill_raw = rows
+
+                    print(
+                        "T-Bill table found:",
+                        i
+                    )
+
+                    break
+
+            print(
+                "TOTAL RAW T-BILLS:",
+                len(tbill_raw)
+            )
+
+            tbill_rows = []
+
+            for record in tbill_raw:
+
+                row = normalize_row(
+                    record
+                )
+
+                if (
+                    row[
+                        "security_description"
+                    ]
+                    and row[
+                        "maturity_date"
+                    ]
+                ):
+
+                    tbill_rows.append(
+                        row
+                    )
+
+            print(
+                "VALID T-BILLS:",
+                len(tbill_rows)
+            )
+
+            # ------------------------------------------------
+            # SELECT T-BILLS
+            # ------------------------------------------------
+
+            selected_tbills = select_tbills(
+                tbill_rows,
                 today
-            ),
-
-        "Yesterday":
-            format_value(
-                yesterday
-            ),
-
-        "1 Week":
-            format_value(
-                week
-            ),
-
-        "Δ 1D":
-            format_change(
-                today,
-                yesterday
-            ),
-
-        "Δ 1W":
-            format_change(
-                today,
-                week
             )
-    })
 
+            print("")
+            print(
+                "================ SELECTED T-BILLS ================"
+            )
 
-st.dataframe(
-    pd.DataFrame(
-        gsec_rows
-    ),
-    use_container_width=True,
-    hide_index=True
-)
+            for tenor in (
+                "91D",
+                "182D",
+                "364D"
+            ):
+
+                row = selected_tbills.get(
+                    tenor
+                )
+
+                print("")
+
+                if row is None:
+
+                    print(
+                        "NDS-OM T-BILL",
+                        tenor,
+                        ": NO VALID SECURITY"
+                    )
+
+                    continue
+
+                days = residual_days(
+                    row[
+                        "maturity_date"
+                    ],
+                    today
+                )
+
+                print(
+                    "NDS-OM T-BILL",
+                    tenor,
+                    ":",
+                    row[
+                        "security_description"
+                    ],
+                    "|",
+                    row[
+                        "maturity_date"
+                    ].strftime(
+                        "%d/%m/%Y"
+                    ),
+                    "| Residual:",
+                    days,
+                    "days",
+                    "| LTY",
+                    row["lty"],
+                    "| LTP",
+                    row["ltp"]
+                )
+
+            # ------------------------------------------------
+            # SELECT G-SECS
+            # ------------------------------------------------
+
+            selected_gsecs = select_gsecs(
+                gsec_rows,
+                today
+            )
+
+            print("")
+            print(
+                "================ SELECTED G-SECS ================"
+            )
+
+            for tenor in (
+                "2Y",
+                "5Y",
+                "10Y"
+            ):
+
+                row = selected_gsecs.get(
+                    tenor
+                )
+
+                print("")
+
+                if row is None:
+
+                    print(
+                        "NDS-OM GSEC",
+                        tenor,
+                        ": NO VALID SECURITY"
+                    )
+
+                    continue
+
+                days = residual_days(
+                    row[
+                        "maturity_date"
+                    ],
+                    today
+                )
+
+                print(
+                    "NDS-OM GSEC",
+                    tenor,
+                    ":",
+                    row[
+                        "security_description"
+                    ],
+                    "|",
+                    row[
+                        "maturity_date"
+                    ].strftime(
+                        "%d/%m/%Y"
+                    ),
+                    "| Residual:",
+                    days,
+                    "days",
+                    "| LTY",
+                    row["lty"],
+                    "| LTP",
+                    row["ltp"]
+                )
+
+            print("")
+
+            # ------------------------------------------------
+            # RETURN DATA TO COLLECTOR
+            # ------------------------------------------------
+
+            return {
+
+                "gsecs": [
+
+                    {
+                        "tenor":
+                            tenor,
+
+                        "security_description":
+                            row[
+                                "security_description"
+                            ],
+
+                        "maturity_date":
+                            row[
+                                "maturity_date"
+                            ],
+
+                        "ltp":
+                            row["ltp"],
+
+                        "lty":
+                            row["lty"]
+                    }
+
+                    for tenor, row
+                    in selected_gsecs.items()
+                    if row is not None
+                ],
+
+                "tbills": [
+
+                    {
+                        "tenor":
+                            tenor,
+
+                        "security_description":
+                            row[
+                                "security_description"
+                            ],
+
+                        "maturity_date":
+                            row[
+                                "maturity_date"
+                            ],
+
+                        "ltp":
+                            row["ltp"],
+
+                        "lty":
+                            row["lty"]
+                    }
+
+                    for tenor, row
+                    in selected_tbills.items()
+                    if row is not None
+                ]
+            }
+
+        finally:
+
+            await browser.close()
 
 
 # ============================================================
-# GLOBAL BONDS
+# PUBLIC FUNCTION
 # ============================================================
 
-st.subheader(
-    "Global Bonds"
-)
+def fetch_ndsom_data():
 
-global_bonds = [
-
-    (
-        "US 10Y",
-        "US10Y"
-    ),
-
-    (
-        "Japan 10Y",
-        "JP10Y"
-    ),
-
-    (
-        "China 10Y",
-        "CN10Y"
+    return asyncio.run(
+        _fetch_ndsom_data()
     )
-]
 
-global_rows = []
 
-for name, tenor in global_bonds:
+# ============================================================
+# DIRECT TEST
+# ============================================================
 
-    global_rows.append(
-        market_row(
-            name,
-            "TradingView",
-            "GLOBAL_BOND",
-            tenor
-        )
+if __name__ == "__main__":
+
+    data = fetch_ndsom_data()
+
+    print("")
+    print(
+        "NDS-OM FETCH COMPLETE"
     )
 
-st.dataframe(
-    pd.DataFrame(
-        global_rows
-    ),
-    use_container_width=True,
-    hide_index=True
-)
+    print(
+        "G-SECS RETURNED:",
+        len(data["gsecs"])
+    )
 
-
-# ============================================================
-# FOOTER
-# ============================================================
-
-st.divider()
-
-st.caption(
-    "NDS-OM: G-Secs & T-Bills • "
-    "CCIL: OIS & Money Market • "
-    "TradingView: Global Bonds"
-)
-
-st.caption(
-    "Today reflects the latest observation stored "
-    "in Neon. Data is collected approximately every "
-    "5 minutes during market hours."
-)
-
-st.caption(
-    "Database: Neon PostgreSQL"
-)
+    print(
+        "T-BILLS RETURNED:",
+        len(data["tbills"])
+    )
