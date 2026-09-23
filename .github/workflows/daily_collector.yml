@@ -1,9 +1,10 @@
-name: Daily Market Data Collector
+name: Market Data Collector
 
 on:
   workflow_dispatch:
+
   schedule:
-    - cron: '35 13 * * 1-5'
+    - cron: '*/5 3-13 * * 1-5'
 
 jobs:
   collect:
