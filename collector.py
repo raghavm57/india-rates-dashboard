@@ -88,7 +88,7 @@ def ensure_table():
 # SAVE OBSERVATION
 # ============================================================
 
-def save_observation(
+ def save_observation(
     observation_date,
     source,
     series,
@@ -110,6 +110,7 @@ def save_observation(
                 """
                 INSERT INTO public.observations
                 (
+                    date,
                     observation_date,
                     source,
                     series,
@@ -125,6 +126,7 @@ def save_observation(
                 )
                 VALUES
                 (
+                    :date,
                     :observation_date,
                     :source,
                     :series,
@@ -141,6 +143,7 @@ def save_observation(
                 """
             ),
             {
+                "date": observation_date,
                 "observation_date": observation_date,
                 "source": source,
                 "series": series,
@@ -154,7 +157,7 @@ def save_observation(
                 "maturity_date": maturity_date,
                 "ltp": ltp,
             }
-        )
+        )               
 
 
 # ============================================================
