@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, date, timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from playwright.async_api import async_playwright
@@ -9,6 +9,10 @@ URL = "https://www.ccilindia.com/market-watch"
 
 IST = ZoneInfo("Asia/Kolkata")
 
+
+# ============================================================
+# HELPERS
+# ============================================================
 
 def parse_date(value):
 
@@ -50,18 +54,28 @@ def select_representative_tbill(
         description = (
             item["security_description"]
             .upper()
+            .strip()
         )
 
         if tenor_days == 91:
-            if not description.startswith("091 DTB"):
+
+            if not description.startswith(
+                "091 DTB"
+            ):
                 continue
 
         elif tenor_days == 182:
-            if not description.startswith("182 DTB"):
+
+            if not description.startswith(
+                "182 DTB"
+            ):
                 continue
 
         elif tenor_days == 364:
-            if not description.startswith("364 DTB"):
+
+            if not description.startswith(
+                "364 DTB"
+            ):
                 continue
 
         difference = abs(
@@ -80,13 +94,20 @@ def select_representative_tbill(
         return None
 
     candidates.sort(
-        key=lambda x: x[0]
+        key=lambda x: (
+            x[0],
+            x[1]
+        )
     )
 
     return candidates[0][2]
 
 
-async def main():
+# ============================================================
+# MAIN NDS-OM FETCHER
+# ============================================================
+
+async def _fetch_ndsom_data():
 
     async with async_playwright() as p:
 
@@ -96,12 +117,12 @@ async def main():
 
         page = await browser.new_page()
 
-        # =========================================================
-        # OPEN CCIL
-        # =========================================================
+        # ----------------------------------------------------
+        # OPEN CCIL MARKET WATCH
+        # ----------------------------------------------------
 
         print(
-            "\nOpening CCIL Market Watch...\n"
+            "Opening CCIL NDS-OM Market Watch..."
         )
 
         await page.goto(
@@ -115,12 +136,12 @@ async def main():
         )
 
         print(
-            f"PAGE: {page.url}"
+            f"Page loaded: {page.url}"
         )
 
-        # =========================================================
-        # G-SEC EXTRACTION
-        # =========================================================
+        # ----------------------------------------------------
+        # G-SEC DATA
+        # ----------------------------------------------------
 
         print(
             "\n================ G-SEC DATA ================\n"
@@ -131,7 +152,8 @@ async def main():
         ).all()
 
         print(
-            f"TABLE COUNT: {len(tables)}"
+            f"Initial table count: "
+            f"{len(tables)}"
         )
 
         gsec_data = []
@@ -143,7 +165,7 @@ async def main():
             ).all()
 
             print(
-                f"G-SEC ROWS: {len(rows)}"
+                f"G-Sec rows: {len(rows)}"
             )
 
             for row in rows:
@@ -166,20 +188,32 @@ async def main():
                     continue
 
                 record = {
-                    "security_description": security,
-                    "maturity_date": cells[1],
-                    "ltp": cells[8],
-                    "lty": cells[9],
-                    "lta": (
-                        cells[10]
-                        if len(cells) > 10
-                        else ""
-                    ),
-                    "tta": (
-                        cells[11]
-                        if len(cells) > 11
-                        else ""
-                    )
+
+                    "security_description":
+                        security,
+
+                    "maturity_date":
+                        cells[1],
+
+                    "ltp":
+                        cells[8],
+
+                    "lty":
+                        cells[9],
+
+                    "lta":
+                        (
+                            cells[10]
+                            if len(cells) > 10
+                            else ""
+                        ),
+
+                    "tta":
+                        (
+                            cells[11]
+                            if len(cells) > 11
+                            else ""
+                        )
                 }
 
                 gsec_data.append(
@@ -198,19 +232,24 @@ async def main():
             f"{len(gsec_data)}"
         )
 
-        # =========================================================
-        # FIND T-BILL TAB
-        # =========================================================
+        # ----------------------------------------------------
+        # T-BILL TAB
+        # ----------------------------------------------------
 
         print(
-            "\n================ T-BILL TAB ================\n"
+            "\n================ T-BILL DATA ================\n"
         )
 
         selectors = [
+
             "text=T-Bills Mkt. Watch",
+
             "text=T-Bills Mkt Watch",
+
             "text=T-Bills",
+
             "a:has-text('T-Bills')",
+
             "button:has-text('T-Bills')"
         ]
 
@@ -228,11 +267,14 @@ async def main():
                     continue
 
                 print(
-                    f"Found selector: {selector}"
+                    f"Found T-Bill selector: "
+                    f"{selector}"
                 )
 
                 try:
+
                     await locator.scroll_into_view_if_needed()
+
                 except Exception:
                     pass
 
@@ -244,7 +286,7 @@ async def main():
                 clicked = True
 
                 print(
-                    f"CLICKED: {selector}"
+                    f"Clicked: {selector}"
                 )
 
                 break
@@ -261,28 +303,29 @@ async def main():
                 )
 
         print(
-            f"\nT-BILL CLICKED: {clicked}"
+            f"T-Bill tab clicked: "
+            f"{clicked}"
         )
 
-        # =========================================================
+        if not clicked:
+
+            await browser.close()
+
+            raise RuntimeError(
+                "Could not click T-Bill Market Watch tab"
+            )
+
+        # ----------------------------------------------------
         # WAIT FOR T-BILL DATA
-        # =========================================================
-
-        print(
-            "\nWaiting for T-Bill data...\n"
-        )
+        # ----------------------------------------------------
 
         await page.wait_for_timeout(
             12000
         )
 
-        # =========================================================
-        # EXTRACT ALL T-BILLS
-        # =========================================================
-
-        print(
-            "\n================ RAW T-BILLS ================\n"
-        )
+        # ----------------------------------------------------
+        # EXTRACT RAW T-BILLS
+        # ----------------------------------------------------
 
         tables = await page.locator(
             "table"
@@ -290,7 +333,7 @@ async def main():
 
         tbill_data = []
 
-        for i, table in enumerate(tables):
+        for table in tables:
 
             rows = await table.locator(
                 "tbody tr"
@@ -323,29 +366,48 @@ async def main():
                 )
 
                 if not (
-                    security_upper.startswith("091 DTB")
+                    security_upper.startswith(
+                        "091 DTB"
+                    )
                     or
-                    security_upper.startswith("182 DTB")
+                    security_upper.startswith(
+                        "182 DTB"
+                    )
                     or
-                    security_upper.startswith("364 DTB")
+                    security_upper.startswith(
+                        "364 DTB"
+                    )
                 ):
+
                     continue
 
                 record = {
-                    "security_description": security,
-                    "maturity_date": cells[1],
-                    "ltp": cells[8],
-                    "lty": cells[9],
-                    "lta": (
-                        cells[10]
-                        if len(cells) > 10
-                        else ""
-                    ),
-                    "tta": (
-                        cells[11]
-                        if len(cells) > 11
-                        else ""
-                    )
+
+                    "security_description":
+                        security,
+
+                    "maturity_date":
+                        cells[1],
+
+                    "ltp":
+                        cells[8],
+
+                    "lty":
+                        cells[9],
+
+                    "lta":
+                        (
+                            cells[10]
+                            if len(cells) > 10
+                            else ""
+                        ),
+
+                    "tta":
+                        (
+                            cells[11]
+                            if len(cells) > 11
+                            else ""
+                        )
                 }
 
                 tbill_data.append(
@@ -357,28 +419,18 @@ async def main():
             f"{len(tbill_data)}"
         )
 
-        # =========================================================
-        # SELECT REPRESENTATIVE SECURITIES
-        # =========================================================
+        # ----------------------------------------------------
+        # SELECT 91D / 182D / 364D
+        # ----------------------------------------------------
 
-        print(
-            "\n================ SELECTED T-BILLS ================\n"
-        )
-
-        today = datetime.now(
-            IST
-        ).date()
-
-        print(
-            f"VALUATION DATE: "
-            f"{today.strftime('%d/%m/%Y')}"
-        )
-
-        selected = {}
+        selected_tbills = {}
 
         for tenor, days in [
+
             ("91D", 91),
+
             ("182D", 182),
+
             ("364D", 364)
         ]:
 
@@ -399,11 +451,21 @@ async def main():
                 result["maturity_date"]
             )
 
+            today = datetime.now(
+                IST
+            ).date()
+
             residual_days = (
                 maturity - today
             ).days
 
-            selected[tenor] = result
+            result["tenor"] = tenor
+
+            result["residual_days"] = (
+                residual_days
+            )
+
+            selected_tbills[tenor] = result
 
             print(
                 f"\n{tenor}"
@@ -434,49 +496,66 @@ async def main():
                 f"{result['lty']}"
             )
 
-            print(
-                f"LTA      : "
-                f"{result['lta']}"
-            )
-
-            print(
-                f"TTA      : "
-                f"{result['tta']}"
-            )
-
-        # =========================================================
-        # FINAL SUMMARY
-        # =========================================================
-
-        print(
-            "\n================ FINAL SUMMARY ================\n"
-        )
-
-        print(
-            f"TOTAL G-SECS: "
-            f"{len(gsec_data)}"
-        )
-
-        print(
-            f"TOTAL RAW T-BILLS: "
-            f"{len(tbill_data)}"
-        )
-
-        print(
-            f"SELECTED T-BILLS: "
-            f"{len(selected)}"
-        )
-
-        print(
-            "\nThe three selected securities "
-            "are ready for Neon integration."
-        )
+        # ----------------------------------------------------
+        # CLOSE
+        # ----------------------------------------------------
 
         await browser.close()
 
+        # ----------------------------------------------------
+        # RETURN STRUCTURED DATA
+        # ----------------------------------------------------
+
+        return {
+
+            "gsecs":
+                gsec_data,
+
+            "tbills":
+                list(
+                    selected_tbills.values()
+                )
+        }
+
+
+# ============================================================
+# PUBLIC FUNCTION
+# ============================================================
+
+def fetch_ndsom_data():
+
+    return asyncio.run(
+        _fetch_ndsom_data()
+    )
+
+
+# ============================================================
+# STANDALONE TEST
+# ============================================================
 
 if __name__ == "__main__":
 
-    asyncio.run(
-        main()
+    result = fetch_ndsom_data()
+
+    print(
+        "\n================ FINAL RESULT ================\n"
+    )
+
+    print(
+        f"G-SECS RETURNED: "
+        f"{len(result['gsecs'])}"
+    )
+
+    print(
+        f"T-BILLS RETURNED: "
+        f"{len(result['tbills'])}"
+    )
+
+    for tbill in result["tbills"]:
+
+        print(
+            f"{tbill['tenor']} | "
+            f"{tbill['security_description']} | "
+            f"{tbill['maturity_date']} | "
+            f"LTY: {tbill['lty']}"
                 )
