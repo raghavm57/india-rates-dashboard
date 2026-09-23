@@ -22,7 +22,11 @@ jobs:
         run: |
           pip install -r requirements.txt
 
-      - name: Run CCIL collector
+      - name: Install Playwright Chromium
+        run: |
+          python -m playwright install --with-deps chromium
+
+      - name: Run market data collector
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
