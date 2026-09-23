@@ -83,6 +83,11 @@ df["ltp"] = pd.to_numeric(
     errors="coerce"
 )
 
+df["publication_time"] = pd.to_datetime(
+    df["publication_time"],
+    errors="coerce"
+)
+
 
 # ============================================================
 # HELPERS
@@ -342,6 +347,52 @@ def market_row(
 
 
 # ============================================================
+# LATEST UPDATE TIMESTAMP
+# ============================================================
+
+timestamp_df = df[
+    df["publication_time"].notna()
+].copy()
+
+if not timestamp_df.empty:
+
+    latest_timestamp = (
+        timestamp_df["publication_time"].max()
+    )
+
+    # Convert timezone-aware timestamps to IST
+    if latest_timestamp.tzinfo is not None:
+
+        latest_timestamp = (
+            latest_timestamp
+            .tz_convert("Asia/Kolkata")
+        )
+
+    else:
+
+        latest_timestamp = (
+            latest_timestamp
+            .tz_localize("Asia/Kolkata")
+        )
+
+    last_updated_text = (
+        latest_timestamp.strftime(
+            "%d-%b-%Y %I:%M:%S %p IST"
+        )
+    )
+
+else:
+
+    latest_date = df["date"].max()
+
+    last_updated_text = (
+        latest_date.strftime(
+            "%d-%b-%Y"
+        )
+    )
+
+
+# ============================================================
 # HEADER
 # ============================================================
 
@@ -349,11 +400,8 @@ st.title(
     "India Rates Dashboard"
 )
 
-latest_date = df["date"].max()
-
 st.caption(
-    f"Latest database observation: "
-    f"{latest_date.strftime('%d-%b-%Y')}"
+    f"🕒 Last updated: **{last_updated_text}**"
 )
 
 
@@ -790,8 +838,8 @@ st.caption(
 
 st.caption(
     "Today reflects the latest observation stored "
-    "in Neon. Live-on-refresh fetching will be added "
-    "as the next step."
+    "in Neon. Data is collected approximately every "
+    "5 minutes during market hours."
 )
 
 st.caption(
