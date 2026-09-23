@@ -83,12 +83,11 @@ def ensure_table():
 
     print("Database table check completed.")
 
-
 # ============================================================
 # SAVE OBSERVATION
 # ============================================================
 
- def save_observation(
+def save_observation(
     observation_date,
     source,
     series,
@@ -126,7 +125,7 @@ def ensure_table():
                 )
                 VALUES
                 (
-                    :date,
+                    :observation_date,
                     :observation_date,
                     :source,
                     :series,
@@ -143,7 +142,6 @@ def ensure_table():
                 """
             ),
             {
-                "date": observation_date,
                 "observation_date": observation_date,
                 "source": source,
                 "series": series,
@@ -156,10 +154,8 @@ def ensure_table():
                 "security_description": security_description,
                 "maturity_date": maturity_date,
                 "ltp": ltp,
-            }
-        )               
-
-
+            },
+        )
 # ============================================================
 # MONEY MARKET
 # ============================================================
