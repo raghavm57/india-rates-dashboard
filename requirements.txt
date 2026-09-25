@@ -2,6 +2,7 @@ streamlit>=1.42
 pandas
 sqlalchemy>=2.0
 psycopg2-binary>=2.9.6
+psycopg[binary]>=3.2
 requests
 lxml
 playwright
