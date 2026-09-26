@@ -686,7 +686,7 @@ def save_rbi_mmo(reference_date):
                 value=value,
                 unit="₹ crore",
                 source_url=source_url,
-                status="success",
+                status="published",
             )
 
             saved += 1
