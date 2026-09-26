@@ -125,7 +125,9 @@ def save_observation(
                     status,
                     security_description,
                     maturity_date,
-                    ltp
+                    ltp,
+                    event_date,
+                    notes
                 )
                 VALUES
                 (
@@ -141,7 +143,9 @@ def save_observation(
                     :status,
                     :security_description,
                     :maturity_date,
-                    :ltp
+                    :ltp,
+                    :event_date,
+                    :notes
                 )
                 """
             ),
@@ -158,8 +162,10 @@ def save_observation(
                 "security_description": security_description,
                 "maturity_date": maturity_date,
                 "ltp": ltp,
-            },
-        )
+                "event_date": event_date,
+                "notes": notes
+             },
+             )
 # ============================================================
 # MONEY MARKET
 # ============================================================
