@@ -717,6 +717,47 @@ def save_ndsom(reference_date):
         f"NDS-OM T-Bills saved: {tbill_saved}"
     )
 
+# ============================================================
+# RBI LIQUIDITY
+# ============================================================
+
+def save_rbi_mmo(reference_date):
+
+    print("\nFetching RBI money-market operations...")
+
+    try:
+
+        result = fetch_rbi_mmo()
+
+        source_url = result["source_url"]
+        data = result["data"]
+
+        saved = 0
+
+        for metric, value in data.items():
+
+            save_observation(
+                observation_date=reference_date,
+                source="RBI",
+                series="RBI_LIQUIDITY",
+                tenor=metric,
+                value=value,
+                unit="₹ crore",
+                source_url=source_url,
+                status="success",
+            )
+
+            saved += 1
+
+        print(
+            f"RBI liquidity observations saved: {saved}"
+        )
+
+    except Exception as e:
+
+        print(
+            f"RBI MMO fetch failed: {e}"
+        )
 
 # ============================================================
 # MAIN
@@ -737,6 +778,10 @@ if __name__ == "__main__":
     )
 
     ensure_table()
+
+    save_rbi_mmo(
+        reference_date
+    )
 
     save_money_market(
         reference_date
