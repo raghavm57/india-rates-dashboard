@@ -7,6 +7,7 @@ import requests
 from sqlalchemy import create_engine, text
 
 from ndsom_fetcher import fetch_ndsom_data
+from rbi_fetcher import fetch_rbi_mmo
 
 
 # ============================================================
