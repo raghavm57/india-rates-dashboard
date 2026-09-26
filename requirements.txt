@@ -6,3 +6,4 @@ psycopg[binary]>=3.2
 requests
 lxml
 playwright
+beautifulsoup4
