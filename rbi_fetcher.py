@@ -132,7 +132,7 @@ def _parse_mmo_release(url):
                 continue
 
             # RBI rows generally have Amount as the last useful number.
-            amount = numbers[-1]
+            amount = numbers[0]
 
             observations.append(
                 {
