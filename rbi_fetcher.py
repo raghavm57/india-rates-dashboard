@@ -82,6 +82,11 @@ def _parse_mmo_release(url=None):
     
     response.raise_for_status()
 
+    print("MMO STATUS:", response.status_code)
+    print("MMO FINAL URL:", response.url)
+    print("MMO HTML LENGTH:", len(response.text))
+    print("MMO HTML START:", response.text[:500])
+  
     tables = pd.read_html(StringIO(response.text))
 
     observations = []
