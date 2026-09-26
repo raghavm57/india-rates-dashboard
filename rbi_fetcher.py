@@ -61,6 +61,10 @@ def _get_release_links():
                 href = "https://www.rbi.org.in/" + href.lstrip("/")
 
             results.append((title, href))
+           
+            print("MMO FOUND:")
+            print("TITLE:", title)
+            print("URL:", href)
 
     return results
 
