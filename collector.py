@@ -102,7 +102,9 @@ def save_observation(
     security_description=None,
     maturity_date=None,
     ltp=None,
-):
+    event_date=None,
+    notes=None,
+    ):
 
     with engine.begin() as conn:
 
