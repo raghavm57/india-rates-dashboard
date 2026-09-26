@@ -67,7 +67,9 @@ def ensure_table():
             ("security_description", "TEXT"),
             ("maturity_date", "DATE"),
             ("ltp", "DOUBLE PRECISION"),
-        ]
+            ("event_date", "DATE"),
+            ("notes", "TEXT"),
+            ]
 
         for column, datatype in columns:
 
