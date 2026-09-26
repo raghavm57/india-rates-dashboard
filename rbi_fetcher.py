@@ -69,14 +69,17 @@ def _get_release_links():
     return results
 
 
-def _parse_mmo_release(url):
-    """Parse one RBI Money Market Operations release."""
+def _parse_mmo_release(url=None):
+    """Parse RBI Money Market Operations data."""
+
+    MMO_URL = "https://m.rbi.org.in//scripts/BS_ViewMMO.aspx"
 
     response = requests.get(
-        url,
+        MMO_URL,
         headers=HEADERS,
         timeout=30,
-    )
+    )    
+    
     response.raise_for_status()
 
     tables = pd.read_html(StringIO(response.text))
