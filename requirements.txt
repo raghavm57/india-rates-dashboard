@@ -5,5 +5,6 @@ psycopg2-binary>=2.9.6
 psycopg[binary]>=3.2
 requests
 lxml
+html5lib
 playwright
 beautifulsoup4
