@@ -658,65 +658,6 @@ def save_ndsom(reference_date):
 
         gsec_saved += 1
 
-    # ========================================================
-    # T-BILLS
-    # ========================================================
-
-    tbill_saved = 0
-
-    for row in tbills:
-
-        tenor = row.get("tenor")
-        security = row.get("security_description")
-        maturity = row.get("maturity_date")
-        lty = row.get("lty")
-        ltp = row.get("ltp")
-
-        if tenor not in [
-            "91D",
-            "182D",
-            "364D",
-        ]:
-            continue
-
-        if not security:
-            continue
-
-        if lty is None:
-            continue
-
-        print(
-            f"NDS-OM T-Bill {tenor}: "
-            f"{security} | {maturity} | LTY {lty}"
-        )
-
-        save_observation(
-            observation_date=reference_date,
-            source="NDS-OM",
-            series="TBILL",
-            tenor=tenor,
-            value=lty,
-            unit="percent",
-            publication_time=None,
-            source_url=(
-                "https://www.ccilindia.com/market-watch"
-            ),
-            status="success",
-            security_description=security,
-            maturity_date=maturity,
-            ltp=ltp,
-        )
-
-        tbill_saved += 1
-
-    print(
-        f"NDS-OM G-Secs saved: {gsec_saved}"
-    )
-
-    print(
-        f"NDS-OM T-Bills saved: {tbill_saved}"
-    )
-
 # ============================================================
 # RBI LIQUIDITY
 # ============================================================
