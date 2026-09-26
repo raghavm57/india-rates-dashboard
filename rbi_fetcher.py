@@ -75,7 +75,7 @@ def _parse_mmo_release(url):
     )
     response.raise_for_status()
 
-    tables = pd.read_html(response.text)
+    tables = pd.read_html(StringIO(response.text))
 
     observations = []
 
